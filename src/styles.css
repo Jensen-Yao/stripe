@@ -462,6 +462,13 @@ h2 {
   background: #d8e2df;
 }
 
+.offline-world-canvas {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
 .leaflet-tooltip {
   border: 1px solid #b7ac9c;
   color: #243034;

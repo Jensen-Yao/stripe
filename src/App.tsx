@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import L from "leaflet";
-import offlineWorldMapUrl from "./assets/offline-world.png";
 import type {
   BaseMapMode,
   CoordinateOrder,
@@ -42,6 +41,7 @@ import {
   computeSimulationResult,
   targetFromCurrentMapCenter
 } from "./utils/simulation";
+import { OfflineWorldCanvasLayer } from "./utils/offlineMap";
 import { groundTrack, makeId, orbitPeriodMinutes, parseManualTles, sampleAt, withIds } from "./utils/tle";
 import { parseStripeText } from "./utils/stripeImport";
 
@@ -64,6 +64,14 @@ const DEFAULT_VISIBILITY: LayerVisibility = {
 
 function toLatLng(point: LatLon): L.LatLngExpression {
   return [point.lat, point.lon];
+}
+
+function westLon(bounds: L.LatLngBounds) {
+  return Math.max(-180, bounds.getWest());
+}
+
+function eastLon(bounds: L.LatLngBounds) {
+  return Math.min(180, bounds.getEast());
 }
 
 function toDateTimeLocalValue(date: Date) {
@@ -189,7 +197,7 @@ function renderStripePreview(layer: L.LayerGroup | null, corners: LatLon[], rend
 export function App() {
   const mapElementRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
-  const offlineLayerRef = useRef<L.LayerGroup | null>(null);
+  const offlineLayerRef = useRef<OfflineWorldCanvasLayer | null>(null);
   const osmLayerRef = useRef<L.TileLayer | null>(null);
   const stripeLayerRef = useRef<L.LayerGroup | null>(null);
   const stripePreviewLayerRef = useRef<L.LayerGroup | null>(null);
@@ -337,11 +345,7 @@ export function App() {
       .addAttribution("Natural Earth 离线地图 | OSM 在线底图")
       .addTo(map);
 
-    const offlineLayer = L.layerGroup();
-    L.imageOverlay(offlineWorldMapUrl, [[-90, -180], [90, 180]], {
-      interactive: false,
-      opacity: 1
-    }).addTo(offlineLayer);
+    const offlineLayer = new OfflineWorldCanvasLayer();
     offlineLayer.addTo(map);
     offlineLayerRef.current = offlineLayer;
 
@@ -778,30 +782,43 @@ export function App() {
       const version = ++redrawVersion;
       layer.clearLayers();
       if (!h3Grid.show || !layerVisibility.h3Grid) return;
-      const { cellToBoundary, latLngToCell } = await import("h3-js");
+      const { cellArea, cellToBoundary, latLngToCell, polygonToCells } = await import("h3-js");
       if (cancelled || version !== redrawVersion) return;
       const bounds = map.getBounds().pad(0.08);
-      const density = Math.max(8, 18 - h3Grid.resolution);
-      const latStep = Math.max(0.25, (bounds.getNorth() - bounds.getSouth()) / density);
-      const lonStep = Math.max(0.25, (bounds.getEast() - bounds.getWest()) / (density * 1.35));
-      const cells = new Set<string>();
-      const maxCells = h3Grid.resolution >= 6 ? 360 : h3Grid.resolution >= 4 ? 520 : 700;
-      for (let lat = bounds.getSouth(); lat <= bounds.getNorth(); lat += latStep) {
-        for (let lon = bounds.getWest(); lon <= bounds.getEast(); lon += lonStep) {
-          cells.add(latLngToCell(lat, lon, h3Grid.resolution));
-          if (cells.size > maxCells) break;
-        }
-        if (cells.size > maxCells) break;
+      const zoom = map.getZoom();
+      const center = bounds.getCenter();
+      const northWest = bounds.getNorthWest();
+      const northEast = bounds.getNorthEast();
+      const southEast = bounds.getSouthEast();
+      const southWest = bounds.getSouthWest();
+      const widthKm = map.distance([center.lat, westLon(bounds)], [center.lat, eastLon(bounds)]) / 1000;
+      const heightKm = map.distance(northWest, southWest) / 1000;
+      const sampleCell = latLngToCell(center.lat, center.lng, h3Grid.resolution);
+      const estimatedCells = Math.max(1, (widthKm * heightKm) / Math.max(0.000001, cellArea(sampleCell, "km2")));
+      const maxExactCells = h3Grid.resolution >= 11 ? 1800 : h3Grid.resolution >= 8 ? 2600 : 4200;
+      if (estimatedCells > maxExactCells) {
+        const suggestedZoom = Math.max(0, Math.ceil(h3Grid.resolution - 4));
+        setStatus(`H3 ${h3Grid.resolution} 级网格数量过多，请继续放大到局部区域后显示。建议缩放级别 ${suggestedZoom}+。`);
+        return;
       }
+      const ring = [
+        [northWest.lng, northWest.lat],
+        [northEast.lng, northEast.lat],
+        [southEast.lng, southEast.lat],
+        [southWest.lng, southWest.lat],
+        [northWest.lng, northWest.lat]
+      ];
+      const cells = polygonToCells([ring], h3Grid.resolution, true);
       const lines: L.LatLngExpression[][] = [];
       cells.forEach((cell) => {
         const boundary = cellToBoundary(cell, true).map(([lon, lat]) => ({ lat, lon }));
         lines.push([...boundary, boundary[0]].map(toLatLng));
       });
+      if (!lines.length) return;
       L.polyline(lines, {
         color: "#2a6f88",
-        opacity: 0.42,
-        weight: 1,
+        opacity: h3Grid.resolution >= 10 ? 0.58 : 0.42,
+        weight: h3Grid.resolution >= 10 ? 0.8 : 1,
         interactive: false,
         renderer: canvasRendererRef.current ?? undefined
       }).addTo(layer);
@@ -1233,14 +1250,30 @@ export function App() {
           <span>显示 H3 六边形网格</span>
         </label>
         <label className="slider">
-          <span>网格层级 {h3Grid.resolution}，层级越高网格越细</span>
+          <span>网格层级 {h3Grid.resolution}，最高 13 级；高层级请放大到局部区域查看</span>
           <input
             type="range"
             min="0"
-            max="7"
+            max="13"
             step="1"
             value={h3Grid.resolution}
             onChange={(event) => setH3Grid((value) => ({ ...value, resolution: Number(event.target.value) }))}
+          />
+        </label>
+        <label className="row">
+          <span>H3 层级</span>
+          <input
+            type="number"
+            min="0"
+            max="13"
+            step="1"
+            value={h3Grid.resolution}
+            onChange={(event) =>
+              setH3Grid((value) => ({
+                ...value,
+                resolution: Math.min(13, Math.max(0, Math.round(Number(event.target.value) || 0)))
+              }))
+            }
           />
         </label>
         <h2>目标点 / 地面站</h2>
