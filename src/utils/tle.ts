@@ -1,6 +1,7 @@
 import {
   degreesLat,
   degreesLong,
+  eciToEcf,
   eciToGeodetic,
   gstime,
   propagate,
@@ -65,6 +66,7 @@ export function sampleAt(tle: SatelliteTle, date: Date): OrbitSample | null {
     if (!positionAndVelocity?.position || !positionAndVelocity.velocity) return null;
     const gmst = gstime(date);
     const geodetic = eciToGeodetic(positionAndVelocity.position, gmst);
+    const ecf = eciToEcf(positionAndVelocity.position, gmst);
     const velocity = positionAndVelocity.velocity;
     const normalized = normalizeLatLon({
       lat: degreesLat(geodetic.latitude),
@@ -76,6 +78,16 @@ export function sampleAt(tle: SatelliteTle, date: Date): OrbitSample | null {
       lon: normalized.lon,
       heightKm: geodetic.height,
       speedKmS: Math.sqrt(velocity.x ** 2 + velocity.y ** 2 + velocity.z ** 2),
+      eciKm: {
+        x: positionAndVelocity.position.x,
+        y: positionAndVelocity.position.y,
+        z: positionAndVelocity.position.z
+      },
+      ecfKm: {
+        x: ecf.x,
+        y: ecf.y,
+        z: ecf.z
+      },
       crossedDateLine: false
     };
   } catch {

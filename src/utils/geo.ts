@@ -1,4 +1,4 @@
-import type { LatLon, ProjectedPoint } from "../types";
+import type { LatLon, PlannerDraft, ProjectedPoint, Stripe, StripeMetrics, StripeOverlapAnalysis, StripeOverlapRelation } from "../types";
 
 const RADIUS_KM = 6371.0088;
 const MAX_MERCATOR_LAT = 85.05112878;
@@ -120,6 +120,21 @@ export function haversineKm(a: LatLon, b: LatLon) {
   return 2 * RADIUS_KM * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
 }
 
+export function bearingDeg(a: LatLon, b: LatLon) {
+  const phi1 = (a.lat * Math.PI) / 180;
+  const phi2 = (b.lat * Math.PI) / 180;
+  const deltaLambda = ((b.lon - a.lon) * Math.PI) / 180;
+  const y = Math.sin(deltaLambda) * Math.cos(phi2);
+  const x =
+    Math.cos(phi1) * Math.sin(phi2) -
+    Math.sin(phi1) * Math.cos(phi2) * Math.cos(deltaLambda);
+  return normalizeBearing((Math.atan2(y, x) * 180) / Math.PI);
+}
+
+export function normalizeBearing(value: number) {
+  return ((value % 360) + 360) % 360;
+}
+
 export function destinationPoint(start: LatLon, bearingDeg: number, distanceKm: number): LatLon {
   const angularDistance = distanceKm / RADIUS_KM;
   const bearing = (bearingDeg * Math.PI) / 180;
@@ -136,6 +151,138 @@ export function destinationPoint(start: LatLon, bearingDeg: number, distanceKm: 
       Math.cos(angularDistance) - Math.sin(lat1) * Math.sin(lat2)
     );
   return normalizeLatLon({ lat: (lat2 * 180) / Math.PI, lon: (lon2 * 180) / Math.PI });
+}
+
+export function buildStripeCorners(draft: PlannerDraft): LatLon[] {
+  const center = normalizeLatLon({ lat: draft.centerLat, lon: draft.centerLon });
+  const halfLength = Math.max(0.1, draft.lengthKm) / 2;
+  const halfWidth = Math.max(0.1, draft.widthKm) / 2;
+  const heading = normalizeBearing(draft.headingDeg);
+  const front = destinationPoint(center, heading, halfLength);
+  const back = destinationPoint(center, heading + 180, halfLength);
+  return [
+    destinationPoint(front, heading - 90, halfWidth),
+    destinationPoint(front, heading + 90, halfWidth),
+    destinationPoint(back, heading + 90, halfWidth),
+    destinationPoint(back, heading - 90, halfWidth)
+  ];
+}
+
+export function measureStripe(points: LatLon[]): StripeMetrics | null {
+  if (points.length < 4) return null;
+  const unwrapped = unwrapLongitudes(points);
+  const projected = unwrapped.map(project);
+  const center = unproject(centroid(projected));
+  const lengthA = haversineKm(points[0], points[3]);
+  const lengthB = haversineKm(points[1], points[2]);
+  const widthA = haversineKm(points[0], points[1]);
+  const widthB = haversineKm(points[3], points[2]);
+  const frontMid = unproject({
+    x: (projected[0].x + projected[1].x) / 2,
+    y: (projected[0].y + projected[1].y) / 2
+  });
+  const backMid = unproject({
+    x: (projected[2].x + projected[3].x) / 2,
+    y: (projected[2].y + projected[3].y) / 2
+  });
+  const lengthKm = (lengthA + lengthB) / 2;
+  const widthKm = (widthA + widthB) / 2;
+  return {
+    center,
+    lengthKm,
+    widthKm,
+    areaKm2: lengthKm * widthKm,
+    headingDeg: bearingDeg(backMid, frontMid)
+  };
+}
+
+export function pointInPolygon(point: LatLon, polygon: LatLon[]) {
+  if (polygon.length < 3) return false;
+  const projectedPoint = project(point);
+  const projectedPolygon = unwrapLongitudes(polygon).map(project);
+  let inside = false;
+  for (let index = 0, previous = projectedPolygon.length - 1; index < projectedPolygon.length; previous = index++) {
+    const currentPoint = projectedPolygon[index];
+    const previousPoint = projectedPolygon[previous];
+    const intersects =
+      currentPoint.y > projectedPoint.y !== previousPoint.y > projectedPoint.y &&
+      projectedPoint.x <
+        ((previousPoint.x - currentPoint.x) * (projectedPoint.y - currentPoint.y)) /
+          (previousPoint.y - currentPoint.y || Number.EPSILON) +
+          currentPoint.x;
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+function stripeSampleGrid(stripe: Stripe, spacingKm: number) {
+  const metrics = measureStripe(stripe.corners);
+  if (!metrics) return [];
+  const projected = unwrapLongitudes(stripe.corners).map(project);
+  const minX = Math.min(...projected.map((point) => point.x));
+  const maxX = Math.max(...projected.map((point) => point.x));
+  const minY = Math.min(...projected.map((point) => point.y));
+  const maxY = Math.max(...projected.map((point) => point.y));
+  const latStep = Math.max(0.03, spacingKm / 111);
+  const lonStep = Math.max(0.03, spacingKm / Math.max(18, 111 * Math.cos((metrics.center.lat * Math.PI) / 180)));
+  const samples: LatLon[] = [];
+  for (let y = minY; y <= maxY; y += latStep) {
+    for (let x = minX; x <= maxX; x += lonStep) {
+      const point = unproject({ x, y });
+      if (pointInPolygon(point, stripe.corners)) samples.push(point);
+      if (samples.length > 1600) return samples;
+    }
+  }
+  return samples.length ? samples : [metrics.center];
+}
+
+function overlapRelation(percentA: number, percentB: number, overlapAreaKm2: number): StripeOverlapRelation {
+  if (overlapAreaKm2 <= 0.0001 || (percentA < 1 && percentB < 1)) return "separate";
+  if (percentA >= 96 && percentB >= 96) return "same";
+  if (percentB >= 96) return "a_contains_b";
+  if (percentA >= 96) return "b_contains_a";
+  return "overlap";
+}
+
+export function analyzeStripeOverlap(a: Stripe, b: Stripe, spacingKm = 15): StripeOverlapAnalysis | null {
+  const metricsA = measureStripe(a.corners);
+  const metricsB = measureStripe(b.corners);
+  if (!metricsA || !metricsB) return null;
+  const samplesA = stripeSampleGrid(a, spacingKm);
+  const samplesB = stripeSampleGrid(b, spacingKm);
+  const insideA = samplesB.filter((point) => pointInPolygon(point, a.corners)).length;
+  const insideB = samplesA.filter((point) => pointInPolygon(point, b.corners)).length;
+  const overlapPercentOfA = samplesA.length ? (insideB / samplesA.length) * 100 : 0;
+  const overlapPercentOfB = samplesB.length ? (insideA / samplesB.length) * 100 : 0;
+  const overlapAreaKm2 = Math.min(
+    metricsA.areaKm2 * (overlapPercentOfA / 100),
+    metricsB.areaKm2 * (overlapPercentOfB / 100)
+  );
+  return {
+    id: `${a.id}-${b.id}`,
+    stripeAId: a.id,
+    stripeBId: b.id,
+    stripeAName: a.name ?? a.id,
+    stripeBName: b.name ?? b.id,
+    relation: overlapRelation(overlapPercentOfA, overlapPercentOfB, overlapAreaKm2),
+    overlapAreaKm2,
+    overlapPercentOfA,
+    overlapPercentOfB,
+    areaAKm2: metricsA.areaKm2,
+    areaBKm2: metricsB.areaKm2
+  };
+}
+
+export function analyzeStripeOverlaps(stripes: Stripe[], spacingKm = 15) {
+  const visibleStripes = stripes.filter((stripe) => stripe.visible !== false && stripe.corners.length >= 4);
+  const results: StripeOverlapAnalysis[] = [];
+  for (let aIndex = 0; aIndex < visibleStripes.length; aIndex += 1) {
+    for (let bIndex = aIndex + 1; bIndex < visibleStripes.length; bIndex += 1) {
+      const result = analyzeStripeOverlap(visibleStripes[aIndex], visibleStripes[bIndex], spacingKm);
+      if (result && result.relation !== "separate") results.push(result);
+    }
+  }
+  return results.sort((a, b) => b.overlapAreaKm2 - a.overlapAreaKm2);
 }
 
 export function coverageRadiusKm(heightKm: number, halfConeDeg: number) {

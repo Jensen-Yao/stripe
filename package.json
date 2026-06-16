@@ -7,11 +7,46 @@
   "scripts": {
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "build": "tsc -p tsconfig.json && vite build && tsc -p electron/tsconfig.json",
+    "dist:win": "npm run build && electron-builder --win nsis --x64",
     "start": "electron .",
     "preview": "vite preview --host 127.0.0.1"
   },
+  "build": {
+    "appId": "com.jensenyao.stripe",
+    "productName": "卫星条带规划工具",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "earth.ico",
+      "package.json"
+    ],
+    "win": {
+      "icon": "earth.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Stripe-Setup-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "卫星条带规划工具"
+    }
+  },
   "dependencies": {
     "@vitejs/plugin-react": "^5.1.1",
+    "h3-js": "^4.4.0",
     "leaflet": "^1.9.4",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
@@ -29,6 +64,7 @@
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
     "electron": "^39.2.7",
+    "electron-builder": "^26.15.3",
     "typescript": "^5.9.3",
     "wait-on": "^9.0.3"
   }

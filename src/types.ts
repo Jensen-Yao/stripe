@@ -2,6 +2,7 @@ export type CoordinateOrder = "lonlat" | "latlon";
 export type BaseMapMode = "offline" | "osm";
 export type ToolMode = "draw" | "select" | "move" | "rotate" | "stretch";
 export type TleSource = "manual" | "celestrak" | "spacetrack";
+export type WorkbenchTab = "scene" | "objects" | "stripe" | "orbit" | "simulation";
 
 export type LatLon = {
   lat: number;
@@ -15,7 +16,9 @@ export type ProjectedPoint = {
 
 export type Stripe = {
   id: string;
+  name?: string;
   corners: LatLon[];
+  visible?: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -36,12 +39,131 @@ export type OrbitSample = {
   lon: number;
   heightKm: number;
   speedKmS: number;
+  eciKm?: Vector3;
+  ecfKm?: Vector3;
   crossedDateLine: boolean;
 };
 
 export type CoverageSettings = {
   show: boolean;
   halfConeDeg: number;
+};
+
+export type Vector3 = {
+  x: number;
+  y: number;
+  z: number;
+};
+
+export type ScenarioSettings = {
+  startTime: string;
+  endTime: string;
+  currentTime: string;
+  playbackSpeed: number;
+  sampleStepSeconds: number;
+};
+
+export type LayerVisibility = {
+  stripes: boolean;
+  satellites: boolean;
+  groundTrack: boolean;
+  subpoint: boolean;
+  coverage: boolean;
+  targets: boolean;
+  accessHighlights: boolean;
+  h3Grid?: boolean;
+};
+
+export type GroundTarget = {
+  id: string;
+  name: string;
+  lat: number;
+  lon: number;
+  heightKm: number;
+  minElevationDeg: number;
+  visible: boolean;
+};
+
+export type AccessSample = {
+  time: string;
+  targetId: string;
+  satelliteId: string;
+  azimuthDeg: number;
+  elevationDeg: number;
+  rangeKm: number;
+  visible: boolean;
+};
+
+export type AccessWindow = {
+  id: string;
+  targetId: string;
+  satelliteId: string;
+  startTime: string;
+  endTime: string;
+  durationSeconds: number;
+  maxElevationDeg: number;
+};
+
+export type CoverageGridPoint = {
+  id: string;
+  lat: number;
+  lon: number;
+  covered: boolean;
+  firstCoveredTime?: string;
+  coverageCount: number;
+};
+
+export type CoverageGrid = {
+  sourceStripeId?: string;
+  spacingKm: number;
+  points: CoverageGridPoint[];
+};
+
+export type SimulationResult = {
+  generatedAt: string;
+  accessWindows: AccessWindow[];
+  currentAccessSamples: AccessSample[];
+  coverageGrid?: CoverageGrid;
+  coveragePercent?: number;
+  firstCoverageTime?: string;
+  revisitMinutes?: number;
+};
+
+export type PlannerDraft = {
+  centerLat: number;
+  centerLon: number;
+  lengthKm: number;
+  widthKm: number;
+  headingDeg: number;
+};
+
+export type StripeMetrics = {
+  center: LatLon;
+  lengthKm: number;
+  widthKm: number;
+  areaKm2: number;
+  headingDeg: number;
+};
+
+export type StripeOverlapRelation = "separate" | "overlap" | "a_contains_b" | "b_contains_a" | "same";
+
+export type StripeOverlapAnalysis = {
+  id: string;
+  stripeAId: string;
+  stripeBId: string;
+  stripeAName: string;
+  stripeBName: string;
+  relation: StripeOverlapRelation;
+  overlapAreaKm2: number;
+  overlapPercentOfA: number;
+  overlapPercentOfB: number;
+  areaAKm2: number;
+  areaBKm2: number;
+};
+
+export type H3GridSettings = {
+  show: boolean;
+  resolution: number;
 };
 
 export type ProjectState = {
@@ -51,6 +173,10 @@ export type ProjectState = {
   coordinateOrder: CoordinateOrder;
   baseMapMode: BaseMapMode;
   coverage: CoverageSettings;
+  scenario?: ScenarioSettings;
+  layerVisibility?: LayerVisibility;
+  groundTargets?: GroundTarget[];
+  h3Grid?: H3GridSettings;
 };
 
 export type StripeApi = {

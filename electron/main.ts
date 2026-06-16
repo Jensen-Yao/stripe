@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, safeStorage } from "electron";
+import { app, BrowserWindow, Menu, dialog, ipcMain, safeStorage } from "electron";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -17,6 +17,66 @@ type SpaceTrackCredentials = {
 };
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
+
+function installChineseMenu() {
+  const template: Electron.MenuItemConstructorOptions[] = [
+    {
+      label: "文件",
+      submenu: [
+        { role: "quit", label: "退出" }
+      ]
+    },
+    {
+      label: "编辑",
+      submenu: [
+        { role: "undo", label: "撤销" },
+        { role: "redo", label: "重做" },
+        { type: "separator" },
+        { role: "cut", label: "剪切" },
+        { role: "copy", label: "复制" },
+        { role: "paste", label: "粘贴" },
+        { role: "selectAll", label: "全选" }
+      ]
+    },
+    {
+      label: "视图",
+      submenu: [
+        { role: "reload", label: "重新加载" },
+        { role: "toggleDevTools", label: "开发者工具" },
+        { type: "separator" },
+        { role: "resetZoom", label: "实际大小" },
+        { role: "zoomIn", label: "放大" },
+        { role: "zoomOut", label: "缩小" },
+        { type: "separator" },
+        { role: "togglefullscreen", label: "全屏" }
+      ]
+    },
+    {
+      label: "窗口",
+      submenu: [
+        { role: "minimize", label: "最小化" },
+        { role: "close", label: "关闭" }
+      ]
+    },
+    {
+      label: "帮助",
+      submenu: [
+        {
+          label: "关于",
+          click: async () => {
+            await dialog.showMessageBox({
+              type: "info",
+              title: "关于",
+              message: "卫星条带规划工具",
+              detail: "轻量 STK 风格条带规划、TLE 轨道与访问覆盖基础仿真工具。"
+            });
+          }
+        }
+      ]
+    }
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
 
 function credentialsPath() {
   return path.join(app.getPath("userData"), "spacetrack.credentials");
@@ -132,7 +192,8 @@ async function createWindow() {
     height: 940,
     minWidth: 1180,
     minHeight: 760,
-    title: "Stripe Satellite Planner",
+    title: "卫星条带规划工具",
+    icon: path.join(__dirname, "../earth.ico"),
     backgroundColor: "#f4f0e7",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -149,6 +210,7 @@ async function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  installChineseMenu();
   ipcMain.handle("tle:fetchCelesTrak", (_event, query) => fetchCelesTrak(query ?? {}));
   ipcMain.handle("tle:fetchSpaceTrack", (_event, query) => fetchSpaceTrack(query ?? {}));
   ipcMain.handle("tle:saveCredentials", async (_event, credentials: SpaceTrackCredentials) => {
