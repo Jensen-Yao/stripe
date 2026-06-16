@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import L from "leaflet";
-import { cellToBoundary, latLngToCell } from "h3-js";
-import offlineWorldMapUrl from "./assets/offline-world.svg";
+import offlineWorldMapUrl from "./assets/offline-world.png";
 import type {
   BaseMapMode,
   CoordinateOrder,
@@ -51,11 +50,6 @@ const ISS_TLE = `ISS (ZARYA)
 2 25544  51.6313 331.6938 0003417 113.3422 246.7928 15.50065061517066`;
 
 const DEFAULT_TLES = parseManualTles(ISS_TLE);
-
-type DragPreview =
-  | { kind: "stripe"; id: string; corners: LatLon[] }
-  | { kind: "target"; id: string; point: LatLon }
-  | null;
 
 const DEFAULT_VISIBILITY: LayerVisibility = {
   stripes: true,
@@ -177,7 +171,7 @@ function relationLabel(relation: StripeOverlapAnalysis["relation"]) {
   }[relation];
 }
 
-function renderStripePreview(layer: L.LayerGroup | null, corners: LatLon[]) {
+function renderStripePreview(layer: L.LayerGroup | null, corners: LatLon[], renderer?: L.Renderer) {
   if (!layer) return;
   layer.clearLayers();
   splitDateLinePath(unwrapLongitudes(corners), true).forEach((segment) => {
@@ -186,7 +180,8 @@ function renderStripePreview(layer: L.LayerGroup | null, corners: LatLon[]) {
       fillColor: "#f1a25f",
       fillOpacity: 0.18,
       weight: 2,
-      dashArray: "5 5"
+      dashArray: "5 5",
+      renderer
     }).addTo(layer);
   });
 }
@@ -202,6 +197,9 @@ export function App() {
   const objectLayerRef = useRef<L.LayerGroup | null>(null);
   const simulationLayerRef = useRef<L.LayerGroup | null>(null);
   const h3LayerRef = useRef<L.LayerGroup | null>(null);
+  const canvasRendererRef = useRef<L.Renderer | null>(null);
+  const stripePreviewFrameRef = useRef<number | null>(null);
+  const stripePreviewCornersRef = useRef<LatLon[] | null>(null);
   const toolModeRef = useRef<ToolMode>("draw");
   const stripeCountRef = useRef(0);
 
@@ -247,7 +245,6 @@ export function App() {
   const [activeTargetId, setActiveTargetId] = useState<string | undefined>();
   const [coverageSpacingKm, setCoverageSpacingKm] = useState(120);
   const [simulationResult, setSimulationResult] = useState<SimulationResult | null>(null);
-  const [dragPreview, setDragPreview] = useState<DragPreview>(null);
   const [status, setStatus] = useState("工作台已就绪。可绘制条带、导入 TLE 或运行动画仿真。");
 
   const activeStripe = stripes.find((stripe) => stripe.id === activeStripeId) ?? stripes[0];
@@ -256,8 +253,11 @@ export function App() {
   const currentSample = selectedTle ? sampleAt(selectedTle, currentTime) : null;
   const periodMinutes = selectedTle ? orbitPeriodMinutes(selectedTle) : 96;
   const track = useMemo(
-    () => (selectedTle ? groundTrack(selectedTle, currentTime, 180) : []),
-    [selectedTle, currentTime.getTime()]
+    () =>
+      selectedTle && layerVisibility.satellites && layerVisibility.groundTrack
+        ? groundTrack(selectedTle, currentTime, 96)
+        : [],
+    [selectedTle, currentTime.getTime(), layerVisibility.satellites, layerVisibility.groundTrack]
   );
   const exportText = stripeOutput(activeStripe, coordinateOrder);
   const stripeMetrics = useMemo(() => (activeStripe ? measureStripe(activeStripe.corners) : null), [activeStripe]);
@@ -274,6 +274,30 @@ export function App() {
       .filter((sample): sample is NonNullable<typeof sample> => Boolean(sample));
   }, [selectedTle, groundTargets, currentTime.getTime()]);
   const visibleAccessNow = currentAccessSamples.filter((sample) => sample.visible);
+
+  function scheduleStripePreview(corners: LatLon[]) {
+    stripePreviewCornersRef.current = corners;
+    if (stripePreviewFrameRef.current !== null) return;
+    stripePreviewFrameRef.current = window.requestAnimationFrame(() => {
+      stripePreviewFrameRef.current = null;
+      if (stripePreviewCornersRef.current) {
+        renderStripePreview(
+          stripePreviewLayerRef.current,
+          stripePreviewCornersRef.current,
+          canvasRendererRef.current ?? undefined
+        );
+      }
+    });
+  }
+
+  function clearStripePreview() {
+    if (stripePreviewFrameRef.current !== null) {
+      window.cancelAnimationFrame(stripePreviewFrameRef.current);
+      stripePreviewFrameRef.current = null;
+    }
+    stripePreviewCornersRef.current = null;
+    stripePreviewLayerRef.current?.clearLayers();
+  }
 
   useEffect(() => {
     toolModeRef.current = toolMode;
@@ -301,9 +325,11 @@ export function App() {
     const map = L.map(mapElementRef.current, {
       worldCopyJump: true,
       zoomControl: false,
-      attributionControl: false
+      attributionControl: false,
+      preferCanvas: true
     }).setView([24, 20], 2);
     mapRef.current = map;
+    canvasRendererRef.current = L.canvas({ padding: 0.35 });
 
     L.control.zoom({ position: "bottomright", zoomInTitle: "放大", zoomOutTitle: "缩小" }).addTo(map);
     L.control
@@ -360,6 +386,7 @@ export function App() {
     });
 
     return () => {
+      clearStripePreview();
       map.remove();
       mapRef.current = null;
     };
@@ -387,7 +414,8 @@ export function App() {
       L.polyline(draftCorners.map(toLatLng), {
         color: "#c75635",
         dashArray: "6 6",
-        weight: 2
+        weight: 2,
+        renderer: canvasRendererRef.current ?? undefined
       }).addTo(layer);
       draftCorners.forEach((corner, index) => {
         L.circleMarker(toLatLng(corner), {
@@ -395,7 +423,8 @@ export function App() {
           color: "#c75635",
           fillColor: "#fff8ea",
           fillOpacity: 1,
-          weight: 2
+          weight: 2,
+          renderer: canvasRendererRef.current ?? undefined
         })
           .bindTooltip(`${index + 1}`)
           .addTo(layer);
@@ -413,7 +442,8 @@ export function App() {
             color: isActive ? "#c6462e" : "#476b6f",
             fillColor: isActive ? "#ed8e48" : "#5aa0a7",
             fillOpacity: isActive ? 0.32 : 0.22,
-            weight: isActive ? 3 : 2
+            weight: isActive ? 3 : 2,
+            renderer: canvasRendererRef.current ?? undefined
           })
             .on("click", () => {
               setActiveStripeId(stripe.id);
@@ -438,7 +468,7 @@ export function App() {
             const position = marker.getLatLng();
             const nextCorners = [...corners];
             nextCorners[cornerIndex] = normalizeLatLon({ lat: position.lat, lon: position.lng });
-            renderStripePreview(stripePreviewLayerRef.current, nextCorners);
+            scheduleStripePreview(nextCorners);
           });
           marker.on("dragend", () => {
             const position = marker.getLatLng();
@@ -447,7 +477,7 @@ export function App() {
               nextCorners[cornerIndex] = normalizeLatLon({ lat: position.lat, lon: position.lng });
               return { ...current, corners: nextCorners, updatedAt: new Date().toISOString() };
             });
-            stripePreviewLayerRef.current?.clearLayers();
+            clearStripePreview();
           });
         });
 
@@ -484,7 +514,7 @@ export function App() {
             x: project(nextCenter).x - project(moveStartCenter).x,
             y: project(nextCenter).y - project(moveStartCenter).y
           };
-          renderStripePreview(stripePreviewLayerRef.current, translatePoints(moveStartCorners, delta).map(unproject));
+          scheduleStripePreview(translatePoints(moveStartCorners, delta).map(unproject));
         });
         centerMarker.on("dragend", () => {
           const nextCenter = normalizeLatLon({
@@ -500,7 +530,7 @@ export function App() {
             corners: translatePoints(moveStartCorners, delta).map(unproject),
             updatedAt: new Date().toISOString()
           }));
-          stripePreviewLayerRef.current?.clearLayers();
+          clearStripePreview();
         });
 
         const rotateAnchor = unproject({ x: center.x, y: center.y - 30 });
@@ -517,7 +547,8 @@ export function App() {
           color: "#34596a",
           dashArray: "3 5",
           weight: 1,
-          opacity: 0.64
+          opacity: 0.64,
+          renderer: canvasRendererRef.current ?? undefined
         }).addTo(layer);
         let rotateStartAngle = Math.atan2(project(rotateAnchor).y - center.y, project(rotateAnchor).x - center.x);
         let rotateStartCorners = unwrapLongitudes(corners).map(project);
@@ -529,10 +560,7 @@ export function App() {
           const next = project({ lat: rotateMarker.getLatLng().lat, lon: rotateMarker.getLatLng().lng });
           const nextAngle = Math.atan2(next.y - center.y, next.x - center.x);
           const deltaDeg = ((nextAngle - rotateStartAngle) * 180) / Math.PI;
-          renderStripePreview(
-            stripePreviewLayerRef.current,
-            rotatePoints(rotateStartCorners, deltaDeg, center).map(unproject)
-          );
+          scheduleStripePreview(rotatePoints(rotateStartCorners, deltaDeg, center).map(unproject));
         });
         rotateMarker.on("dragend", () => {
           const next = project({ lat: rotateMarker.getLatLng().lat, lon: rotateMarker.getLatLng().lng });
@@ -543,7 +571,7 @@ export function App() {
             corners: rotatePoints(unwrapLongitudes(current.corners).map(project), deltaDeg, center).map(unproject),
             updatedAt: new Date().toISOString()
           }));
-          stripePreviewLayerRef.current?.clearLayers();
+          clearStripePreview();
         });
 
         [
@@ -591,7 +619,7 @@ export function App() {
             ).map(unproject);
           };
           marker.on("drag", () => {
-            renderStripePreview(stripePreviewLayerRef.current, calculateStretch());
+            scheduleStripePreview(calculateStretch());
           });
           marker.on("dragend", () => {
             updateStripe(stripe.id, (current) => ({
@@ -599,7 +627,7 @@ export function App() {
               corners: calculateStretch(),
               updatedAt: new Date().toISOString()
             }));
-            stripePreviewLayerRef.current?.clearLayers();
+            clearStripePreview();
           });
         });
       });
@@ -616,7 +644,8 @@ export function App() {
         L.polyline(segment.map(toLatLng), {
           color: "#2468a9",
           weight: 2,
-          opacity: 0.84
+          opacity: 0.84,
+          renderer: canvasRendererRef.current ?? undefined
         }).addTo(layer);
       });
     }
@@ -628,7 +657,8 @@ export function App() {
           fillColor: "#7650a8",
           fillOpacity: 0.08,
           weight: 2,
-          dashArray: "8 5"
+          dashArray: "8 5",
+          renderer: canvasRendererRef.current ?? undefined
         }).addTo(layer);
       });
     }
@@ -639,7 +669,8 @@ export function App() {
         color: "#123f67",
         fillColor: "#38a0ff",
         fillOpacity: 1,
-        weight: 2
+        weight: 2,
+        renderer: canvasRendererRef.current ?? undefined
       })
         .bindTooltip(`${selectedTle.name}<br>${currentSample.lat.toFixed(3)}, ${currentSample.lon.toFixed(3)}`, {
           permanent: false,
@@ -666,13 +697,11 @@ export function App() {
     layer.clearLayers();
     if (!layerVisibility.targets) return;
 
-    const previewTarget = dragPreview?.kind === "target" ? dragPreview : null;
     groundTargets
       .filter((target) => target.visible)
       .forEach((target) => {
-        const point = previewTarget?.id === target.id ? previewTarget.point : target;
         const access = currentAccessSamples.find((sample) => sample.targetId === target.id);
-        const marker = L.marker(toLatLng(point), {
+        const marker = L.marker(toLatLng(target), {
           draggable: true,
           icon: L.divIcon({
             className: access?.visible ? "target-marker target-visible" : "target-marker",
@@ -692,24 +721,15 @@ export function App() {
             setActiveTargetId(target.id);
             setActiveTab("objects");
           });
-        marker.on("drag", () => {
-          const position = marker.getLatLng();
-          setDragPreview({
-            kind: "target",
-            id: target.id,
-            point: normalizeLatLon({ lat: position.lat, lon: position.lng })
-          });
-        });
         marker.on("dragend", () => {
           const position = marker.getLatLng();
           updateTarget(target.id, {
             lat: Number(position.lat.toFixed(6)),
             lon: Number(position.lng.toFixed(6))
           });
-          setDragPreview(null);
         });
       });
-  }, [groundTargets, currentAccessSamples, layerVisibility.targets, dragPreview]);
+  }, [groundTargets, currentAccessSamples, layerVisibility.targets]);
 
   useEffect(() => {
     const layer = simulationLayerRef.current;
@@ -725,19 +745,23 @@ export function App() {
           color: "#1d7b50",
           weight: 2,
           dashArray: "5 6",
-          opacity: 0.72
+          opacity: 0.72,
+          renderer: canvasRendererRef.current ?? undefined
         }).addTo(layer);
       });
     }
 
     if (simulationResult.coverageGrid && layerVisibility.coverage) {
-      simulationResult.coverageGrid.points.forEach((point) => {
+      const points = simulationResult.coverageGrid.points;
+      const stride = Math.max(1, Math.ceil(points.length / 450));
+      points.filter((_point, index) => index % stride === 0).forEach((point) => {
         L.circleMarker(toLatLng(point), {
           radius: 2.6,
           color: point.covered ? "#1f8a55" : "#9c6d5a",
           fillColor: point.covered ? "#28a96a" : "#d9a27a",
           fillOpacity: point.covered ? 0.78 : 0.42,
-          weight: 1
+          weight: 1,
+          renderer: canvasRendererRef.current ?? undefined
         }).addTo(layer);
       });
     }
@@ -747,36 +771,54 @@ export function App() {
     const map = mapRef.current;
     const layer = h3LayerRef.current;
     if (!map || !layer) return;
-    const redraw = () => {
+    let cancelled = false;
+    let frame: number | null = null;
+    let redrawVersion = 0;
+    const redraw = async () => {
+      const version = ++redrawVersion;
       layer.clearLayers();
       if (!h3Grid.show || !layerVisibility.h3Grid) return;
+      const { cellToBoundary, latLngToCell } = await import("h3-js");
+      if (cancelled || version !== redrawVersion) return;
       const bounds = map.getBounds().pad(0.08);
-      const latStep = Math.max(0.15, (bounds.getNorth() - bounds.getSouth()) / 18);
-      const lonStep = Math.max(0.15, (bounds.getEast() - bounds.getWest()) / 28);
+      const density = Math.max(8, 18 - h3Grid.resolution);
+      const latStep = Math.max(0.25, (bounds.getNorth() - bounds.getSouth()) / density);
+      const lonStep = Math.max(0.25, (bounds.getEast() - bounds.getWest()) / (density * 1.35));
       const cells = new Set<string>();
+      const maxCells = h3Grid.resolution >= 6 ? 360 : h3Grid.resolution >= 4 ? 520 : 700;
       for (let lat = bounds.getSouth(); lat <= bounds.getNorth(); lat += latStep) {
         for (let lon = bounds.getWest(); lon <= bounds.getEast(); lon += lonStep) {
           cells.add(latLngToCell(lat, lon, h3Grid.resolution));
-          if (cells.size > 900) break;
+          if (cells.size > maxCells) break;
         }
-        if (cells.size > 900) break;
+        if (cells.size > maxCells) break;
       }
+      const lines: L.LatLngExpression[][] = [];
       cells.forEach((cell) => {
         const boundary = cellToBoundary(cell, true).map(([lon, lat]) => ({ lat, lon }));
-        L.polygon(boundary.map(toLatLng), {
-          color: "#2a6f88",
-          fillColor: "#2a6f88",
-          fillOpacity: 0.035,
-          opacity: 0.5,
-          weight: 1,
-          interactive: false
-        }).addTo(layer);
+        lines.push([...boundary, boundary[0]].map(toLatLng));
+      });
+      L.polyline(lines, {
+        color: "#2a6f88",
+        opacity: 0.42,
+        weight: 1,
+        interactive: false,
+        renderer: canvasRendererRef.current ?? undefined
+      }).addTo(layer);
+    };
+    const scheduleRedraw = () => {
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        void redraw();
       });
     };
-    redraw();
-    map.on("moveend zoomend", redraw);
+    scheduleRedraw();
+    map.on("moveend zoomend", scheduleRedraw);
     return () => {
-      map.off("moveend zoomend", redraw);
+      cancelled = true;
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      map.off("moveend zoomend", scheduleRedraw);
     };
   }, [h3Grid.show, h3Grid.resolution, layerVisibility.h3Grid]);
 

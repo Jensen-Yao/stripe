@@ -1,10 +1,12 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const topojson = require("topojson-client");
+const sharp = require("sharp");
 
 const root = path.resolve(__dirname, "..");
 const countriesTopology = require(path.join(root, "node_modules/world-atlas/countries-10m.json"));
-const output = path.join(root, "src/assets/offline-world.svg");
+const svgOutput = path.join(root, "src/assets/offline-world.svg");
+const pngOutput = path.join(root, "src/assets/offline-world.png");
 
 const width = 3600;
 const height = 1800;
@@ -72,7 +74,19 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${hei
 </svg>
 `;
 
-fs.mkdirSync(path.dirname(output), { recursive: true });
-fs.writeFileSync(output, svg, "utf8");
-const stats = fs.statSync(output);
-console.log(`${output} ${stats.size} bytes`);
+fs.mkdirSync(path.dirname(svgOutput), { recursive: true });
+fs.writeFileSync(svgOutput, svg, "utf8");
+
+sharp(Buffer.from(svg))
+  .png({ compressionLevel: 9, palette: true, quality: 88 })
+  .toFile(pngOutput)
+  .then(() => {
+    const svgStats = fs.statSync(svgOutput);
+    const pngStats = fs.statSync(pngOutput);
+    console.log(`${svgOutput} ${svgStats.size} bytes`);
+    console.log(`${pngOutput} ${pngStats.size} bytes`);
+  })
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });

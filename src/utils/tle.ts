@@ -10,6 +10,8 @@ import {
 import type { OrbitSample, SatelliteTle } from "../types";
 import { normalizeLatLon } from "./geo";
 
+const satrecCache = new Map<string, ReturnType<typeof twoline2satrec>>();
+
 export function makeId(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -61,7 +63,16 @@ export function sampleOrbit(tle: SatelliteTle, centerTime: Date, minutesFromCent
 
 export function sampleAt(tle: SatelliteTle, date: Date): OrbitSample | null {
   try {
-    const satrec = twoline2satrec(tle.line1, tle.line2);
+    const cacheKey = `${tle.line1}\n${tle.line2}`;
+    let satrec = satrecCache.get(cacheKey);
+    if (!satrec) {
+      satrec = twoline2satrec(tle.line1, tle.line2);
+      satrecCache.set(cacheKey, satrec);
+      if (satrecCache.size > 80) {
+        const oldestKey = satrecCache.keys().next().value;
+        if (oldestKey) satrecCache.delete(oldestKey);
+      }
+    }
     const positionAndVelocity = propagate(satrec, date);
     if (!positionAndVelocity?.position || !positionAndVelocity.velocity) return null;
     const gmst = gstime(date);
