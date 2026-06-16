@@ -41,7 +41,7 @@ import {
   computeSimulationResult,
   targetFromCurrentMapCenter
 } from "./utils/simulation";
-import { OfflineWorldCanvasLayer } from "./utils/offlineMap";
+import { OfflineWorldGridLayer } from "./utils/offlineMap";
 import { groundTrack, makeId, orbitPeriodMinutes, parseManualTles, sampleAt, withIds } from "./utils/tle";
 import { parseStripeText } from "./utils/stripeImport";
 
@@ -197,7 +197,7 @@ function renderStripePreview(layer: L.LayerGroup | null, corners: LatLon[], rend
 export function App() {
   const mapElementRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
-  const offlineLayerRef = useRef<OfflineWorldCanvasLayer | null>(null);
+  const offlineLayerRef = useRef<OfflineWorldGridLayer | null>(null);
   const osmLayerRef = useRef<L.TileLayer | null>(null);
   const stripeLayerRef = useRef<L.LayerGroup | null>(null);
   const stripePreviewLayerRef = useRef<L.LayerGroup | null>(null);
@@ -307,6 +307,15 @@ export function App() {
     stripePreviewLayerRef.current?.clearLayers();
   }
 
+  function resetMapView() {
+    const map = mapRef.current;
+    if (!map) return;
+    map.setView([18, 20], 2, { animate: false });
+    map.invalidateSize(false);
+    offlineLayerRef.current?.redraw();
+    setStatus("地图视图已重置。");
+  }
+
   useEffect(() => {
     toolModeRef.current = toolMode;
   }, [toolMode]);
@@ -329,12 +338,16 @@ export function App() {
 
   useEffect(() => {
     if (!mapElementRef.current || mapRef.current) return;
+    const mapElement = mapElementRef.current;
 
-    const map = L.map(mapElementRef.current, {
+    const map = L.map(mapElement, {
       worldCopyJump: true,
       zoomControl: false,
       attributionControl: false,
-      preferCanvas: true
+      preferCanvas: true,
+      minZoom: 2,
+      maxBounds: [[-85.05112878, -720], [85.05112878, 720]],
+      maxBoundsViscosity: 0.35
     }).setView([24, 20], 2);
     mapRef.current = map;
     canvasRendererRef.current = L.canvas({ padding: 0.35 });
@@ -345,7 +358,13 @@ export function App() {
       .addAttribution("Natural Earth 离线地图 | OSM 在线底图")
       .addTo(map);
 
-    const offlineLayer = new OfflineWorldCanvasLayer();
+    const offlineLayer = new OfflineWorldGridLayer({
+      pane: "tilePane",
+      noWrap: false,
+      keepBuffer: 3,
+      updateWhenIdle: false,
+      updateWhenZooming: false
+    });
     offlineLayer.addTo(map);
     offlineLayerRef.current = offlineLayer;
 
@@ -360,6 +379,17 @@ export function App() {
     objectLayerRef.current = L.layerGroup().addTo(map);
     simulationLayerRef.current = L.layerGroup().addTo(map);
     h3LayerRef.current = L.layerGroup().addTo(map);
+
+    let resizeFrame: number | null = null;
+    const resizeObserver = new ResizeObserver(() => {
+      if (resizeFrame !== null) window.cancelAnimationFrame(resizeFrame);
+      resizeFrame = window.requestAnimationFrame(() => {
+        resizeFrame = null;
+        map.invalidateSize(false);
+        offlineLayerRef.current?.redraw();
+      });
+    });
+    resizeObserver.observe(mapElement);
 
     map.on("click", (event) => {
       if (toolModeRef.current !== "draw") return;
@@ -390,6 +420,8 @@ export function App() {
     });
 
     return () => {
+      resizeObserver.disconnect();
+      if (resizeFrame !== null) window.cancelAnimationFrame(resizeFrame);
       clearStripePreview();
       map.remove();
       mapRef.current = null;
@@ -1686,6 +1718,7 @@ export function App() {
             ))}
           </div>
           <div className="tool-group">
+            <button onClick={resetMapView} title="回到完整世界地图视图">重置视图</button>
             <button onClick={() => rotateActive(-5)}>左转</button>
             <button onClick={() => rotateActive(5)}>右转</button>
             <button onClick={() => scaleActive(1.08, 1)}>加宽</button>

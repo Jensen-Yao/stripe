@@ -15,11 +15,12 @@ type Topology = {
 };
 
 type MapLevel = {
-  maxZoom: number;
   land: MultiPolygon;
   borders: MultiLine;
 };
 type LevelKey = "110m" | "50m" | "10m";
+
+const TILE_SIZE = 256;
 
 function topoLand(topology: Topology) {
   const item = feature(topology as never, topology.objects.countries as never) as unknown as GeoJSON.FeatureCollection;
@@ -39,15 +40,14 @@ function topoBorders(topology: Topology) {
 
 const levelCache = new Map<LevelKey, MapLevel>();
 
-function buildLevel(topology: Topology, maxZoom: number): MapLevel {
+function buildLevel(topology: Topology): MapLevel {
   return {
-    maxZoom,
     land: topoLand(topology),
     borders: topoBorders(topology)
   };
 }
 
-levelCache.set("110m", buildLevel(countries110m, 2.2));
+levelCache.set("110m", buildLevel(countries110m));
 
 function levelKeyForZoom(zoom: number): LevelKey {
   if (zoom <= 2.2) return "110m";
@@ -60,14 +60,18 @@ async function loadLevel(key: LevelKey) {
   if (cached) return cached;
   if (key === "50m") {
     const module = await import("world-atlas/countries-50m.json");
-    const level = buildLevel(module.default, 4.5);
+    const level = buildLevel(module.default);
     levelCache.set(key, level);
     return level;
   }
   const module = await import("world-atlas/countries-10m.json");
-  const level = buildLevel(module.default, Infinity);
+  const level = buildLevel(module.default);
   levelCache.set(key, level);
   return level;
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function crossesDateLine(points: Ring | Line) {
@@ -83,8 +87,10 @@ function lineInBounds(points: Ring | Line, bounds: L.LatLngBounds) {
 
 function drawLine(
   ctx: CanvasRenderingContext2D,
-  map: L.Map,
-  topLeft: L.Point,
+  zoom: number,
+  tileX: number,
+  tileY: number,
+  worldOffset: number,
   points: Ring | Line,
   close: boolean
 ) {
@@ -94,7 +100,9 @@ function drawLine(
     if (previous && Math.abs(lon - previous[0]) > 180) {
       started = false;
     }
-    const point = map.latLngToLayerPoint([lat, lon]).subtract(topLeft);
+    const point = L.CRS.EPSG3857.latLngToPoint(L.latLng(lat, lon + worldOffset), zoom).subtract(
+      L.point(tileX * TILE_SIZE, tileY * TILE_SIZE)
+    );
     if (!started) {
       ctx.moveTo(point.x, point.y);
       started = true;
@@ -106,91 +114,54 @@ function drawLine(
   if (close && started) ctx.closePath();
 }
 
-export class OfflineWorldCanvasLayer extends L.Layer {
-  private canvas?: HTMLCanvasElement;
-  private frame: number | null = null;
-  private drawVersion = 0;
-
-  onAdd(map: L.Map) {
-    this.canvas = L.DomUtil.create("canvas", "offline-world-canvas");
-    const pane = map.getPane("overlayPane") ?? map.getPanes().overlayPane;
-    pane.appendChild(this.canvas);
-    this.attachEvents(map);
-    this.schedule(map);
-    return this;
-  }
-
-  onRemove(map: L.Map) {
-    if (this.frame !== null) window.cancelAnimationFrame(this.frame);
-    this.frame = null;
-    this.detachEvents(map);
-    this.canvas?.remove();
-    this.canvas = undefined;
-    return this;
-  }
-
-  private attachEvents(map: L.Map) {
-    map.on("moveend zoomend resize", this.scheduleForEvent, this);
-    map.on("zoomstart movestart", this.hideDuringMove, this);
-    map.on("moveend zoomend", this.showAfterMove, this);
-  }
-
-  private detachEvents(map: L.Map) {
-    map.off("moveend zoomend resize", this.scheduleForEvent, this);
-    map.off("zoomstart movestart", this.hideDuringMove, this);
-    map.off("moveend zoomend", this.showAfterMove, this);
-  }
-
-  private scheduleForEvent(event: L.LeafletEvent) {
-    this.schedule(event.target as L.Map);
-  }
-
-  private hideDuringMove() {
-    if (this.canvas) this.canvas.style.opacity = "0.72";
-  }
-
-  private showAfterMove(event: L.LeafletEvent) {
-    if (this.canvas) this.canvas.style.opacity = "1";
-    this.schedule(event.target as L.Map);
-  }
-
-  private schedule(map: L.Map) {
-    if (this.frame !== null) window.cancelAnimationFrame(this.frame);
-    this.frame = window.requestAnimationFrame(() => {
-      this.frame = null;
-      void this.draw(map);
-    });
-  }
-
-  private async draw(map: L.Map) {
-    if (!this.canvas) return;
-    const version = ++this.drawVersion;
-    const size = map.getSize();
-    const topLeft = map.containerPointToLayerPoint([0, 0]);
-    L.DomUtil.setPosition(this.canvas, topLeft);
+export class OfflineWorldGridLayer extends L.GridLayer {
+  createTile(coords: L.Coords, done: L.DoneCallback) {
+    const tile = L.DomUtil.create("canvas", "offline-world-tile");
+    const tileSize = this.getTileSize();
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    this.canvas.width = Math.max(1, Math.round(size.x * dpr));
-    this.canvas.height = Math.max(1, Math.round(size.y * dpr));
-    this.canvas.style.width = `${size.x}px`;
-    this.canvas.style.height = `${size.y}px`;
-    this.canvas.style.transform = "translate3d(0,0,0)";
+    tile.width = Math.round(tileSize.x * dpr);
+    tile.height = Math.round(tileSize.y * dpr);
+    tile.style.width = `${tileSize.x}px`;
+    tile.style.height = `${tileSize.y}px`;
 
-    const ctx = this.canvas.getContext("2d");
+    this.drawTile(tile, coords, tileSize, dpr)
+      .then(() => done(undefined, tile))
+      .catch((error) => done(error as Error, tile));
+
+    return tile;
+  }
+
+  private async drawTile(tile: HTMLCanvasElement, coords: L.Coords, tileSize: L.Point, dpr: number) {
+    const ctx = tile.getContext("2d");
     if (!ctx) return;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, size.x, size.y);
-    ctx.fillStyle = "#d8e4e1";
-    ctx.fillRect(0, 0, size.x, size.y);
 
-    const zoom = map.getZoom();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = "#d8e4e1";
+    ctx.fillRect(0, 0, tileSize.x, tileSize.y);
+
+    const zoom = coords.z;
     const level = await loadLevel(levelKeyForZoom(zoom));
-    if (version !== this.drawVersion || !this.canvas) return;
-    const bounds = map.getBounds().pad(0.08);
+    const worldTileCount = Math.max(1, Math.round(2 ** zoom));
+    const tileX = ((coords.x % worldTileCount) + worldTileCount) % worldTileCount;
+    const tileY = coords.y;
+    const origin = L.point(tileX * tileSize.x, tileY * tileSize.y);
+    const northWest = L.CRS.EPSG3857.pointToLatLng(origin, zoom);
+    const southEast = L.CRS.EPSG3857.pointToLatLng(origin.add(tileSize), zoom);
+    const worldOffset = 0;
+    const west = clamp(northWest.lng, -180, 180);
+    const east = clamp(southEast.lng, -180, 180);
+    const south = clamp(southEast.lat, -90, 90);
+    const north = clamp(northWest.lat, -90, 90);
+    if (east <= west || north <= south) return;
+    const bounds = L.latLngBounds(
+      [south, west],
+      [north, east]
+    ).pad(0.06);
 
     ctx.beginPath();
     level.land.forEach((polygon) => {
       polygon.forEach((ring) => {
-        if (lineInBounds(ring, bounds)) drawLine(ctx, map, topLeft, ring, true);
+        if (lineInBounds(ring, bounds)) drawLine(ctx, zoom, tileX, tileY, worldOffset, ring, true);
       });
     });
     ctx.fillStyle = "#d9cf78";
@@ -198,15 +169,19 @@ export class OfflineWorldCanvasLayer extends L.Layer {
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
     ctx.strokeStyle = "#6e857b";
-    ctx.lineWidth = Math.max(0.8, Math.min(1.5, zoom * 0.28));
+    ctx.lineWidth = Math.max(0.75, Math.min(1.45, zoom * 0.28));
     ctx.stroke();
 
     ctx.beginPath();
     level.borders.forEach((line) => {
-      if (lineInBounds(line, bounds)) drawLine(ctx, map, topLeft, line, false);
+      if (lineInBounds(line, bounds)) drawLine(ctx, zoom, tileX, tileY, worldOffset, line, false);
     });
     ctx.strokeStyle = "rgba(89, 111, 103, 0.72)";
-    ctx.lineWidth = Math.max(0.5, Math.min(1, zoom * 0.16));
+    ctx.lineWidth = Math.max(0.48, Math.min(1, zoom * 0.16));
     ctx.stroke();
+  }
+
+  getTileSize() {
+    return L.point(TILE_SIZE, TILE_SIZE);
   }
 }

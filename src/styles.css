@@ -462,11 +462,8 @@ h2 {
   background: #d8e2df;
 }
 
-.offline-world-canvas {
-  position: absolute;
-  inset: 0;
+.offline-world-tile {
   pointer-events: none;
-  transition: opacity 120ms ease;
 }
 
 .leaflet-tooltip {
