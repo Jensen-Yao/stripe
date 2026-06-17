@@ -41,7 +41,7 @@ import {
   computeSimulationResult,
   targetFromCurrentMapCenter
 } from "./utils/simulation";
-import { OfflineWorldGridLayer } from "./utils/offlineMap";
+import { OfflineWorldLayer } from "./utils/offlineMap";
 import { groundTrack, makeId, orbitPeriodMinutes, parseManualTles, sampleAt, withIds } from "./utils/tle";
 import { parseStripeText } from "./utils/stripeImport";
 
@@ -194,10 +194,18 @@ function renderStripePreview(layer: L.LayerGroup | null, corners: LatLon[], rend
   });
 }
 
+function h3CellBudget(resolution: number) {
+  if (resolution >= 12) return 700;
+  if (resolution >= 10) return 1200;
+  if (resolution >= 8) return 1800;
+  if (resolution >= 6) return 2600;
+  return 3600;
+}
+
 export function App() {
   const mapElementRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
-  const offlineLayerRef = useRef<OfflineWorldGridLayer | null>(null);
+  const offlineLayerRef = useRef<OfflineWorldLayer | null>(null);
   const osmLayerRef = useRef<L.TileLayer | null>(null);
   const stripeLayerRef = useRef<L.LayerGroup | null>(null);
   const stripePreviewLayerRef = useRef<L.LayerGroup | null>(null);
@@ -312,7 +320,6 @@ export function App() {
     if (!map) return;
     map.setView([18, 20], 2, { animate: false });
     map.invalidateSize(false);
-    offlineLayerRef.current?.redraw();
     setStatus("地图视图已重置。");
   }
 
@@ -358,13 +365,7 @@ export function App() {
       .addAttribution("Natural Earth 离线地图 | OSM 在线底图")
       .addTo(map);
 
-    const offlineLayer = new OfflineWorldGridLayer({
-      pane: "tilePane",
-      noWrap: false,
-      keepBuffer: 3,
-      updateWhenIdle: false,
-      updateWhenZooming: false
-    });
+    const offlineLayer = new OfflineWorldLayer();
     offlineLayer.addTo(map);
     offlineLayerRef.current = offlineLayer;
 
@@ -386,7 +387,6 @@ export function App() {
       resizeFrame = window.requestAnimationFrame(() => {
         resizeFrame = null;
         map.invalidateSize(false);
-        offlineLayerRef.current?.redraw();
       });
     });
     resizeObserver.observe(mapElement);
@@ -827,10 +827,11 @@ export function App() {
       const heightKm = map.distance(northWest, southWest) / 1000;
       const sampleCell = latLngToCell(center.lat, center.lng, h3Grid.resolution);
       const estimatedCells = Math.max(1, (widthKm * heightKm) / Math.max(0.000001, cellArea(sampleCell, "km2")));
-      const maxExactCells = h3Grid.resolution >= 11 ? 1800 : h3Grid.resolution >= 8 ? 2600 : 4200;
+      const maxExactCells = h3CellBudget(h3Grid.resolution);
       if (estimatedCells > maxExactCells) {
-        const suggestedZoom = Math.max(0, Math.ceil(h3Grid.resolution - 4));
-        setStatus(`H3 ${h3Grid.resolution} 级网格数量过多，请继续放大到局部区域后显示。建议缩放级别 ${suggestedZoom}+。`);
+        setStatus(
+          `H3 ${h3Grid.resolution} 级当前约 ${Math.round(estimatedCells).toLocaleString("zh-CN")} 个网格，超过流畅显示上限 ${maxExactCells.toLocaleString("zh-CN")}。请放大到更小区域后显示。`
+        );
         return;
       }
       const ring = [
@@ -863,10 +864,17 @@ export function App() {
       });
     };
     scheduleRedraw();
+    const clearDuringMove = () => {
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      frame = null;
+      layer.clearLayers();
+    };
+    map.on("movestart zoomstart", clearDuringMove);
     map.on("moveend zoomend", scheduleRedraw);
     return () => {
       cancelled = true;
       if (frame !== null) window.cancelAnimationFrame(frame);
+      map.off("movestart zoomstart", clearDuringMove);
       map.off("moveend zoomend", scheduleRedraw);
     };
   }, [h3Grid.show, h3Grid.resolution, layerVisibility.h3Grid]);

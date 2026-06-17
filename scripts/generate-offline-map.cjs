@@ -4,75 +4,59 @@ const topojson = require("topojson-client");
 
 const root = path.resolve(__dirname, "..");
 const countriesTopology = require(path.join(root, "node_modules/world-atlas/countries-10m.json"));
-const svgOutput = path.join(root, "src/assets/offline-world.svg");
+const jsonOutput = path.join(root, "public/data/offline-world.json");
 
-const width = 3600;
-const height = 1800;
+const minPointDeltaDeg = 0.018;
+const roundDigits = 4;
 
-function xy([lon, lat]) {
-  return [((lon + 180) / 360) * width, ((90 - lat) / 180) * height];
+function round(value) {
+  return Number(value.toFixed(roundDigits));
 }
 
-function pathFromLine(line, close = false) {
-  const segments = [];
-  let current = [];
-  for (let index = 0; index < line.length; index += 1) {
-    const coordinate = line[index];
-    if (index > 0) {
-      const previous = line[index - 1];
-      if (Math.abs(coordinate[0] - previous[0]) > 120 || Math.abs(coordinate[1] - previous[1]) > 70) {
-        if (current.length > 1) segments.push(current);
-        current = [];
-      }
+function simplifyLine(line) {
+  const result = [];
+  let previous = null;
+  for (const [lon, lat] of line) {
+    if (
+      !previous ||
+      Math.abs(lon - previous[0]) >= minPointDeltaDeg ||
+      Math.abs(lat - previous[1]) >= minPointDeltaDeg ||
+      Math.abs(lon - previous[0]) > 180
+    ) {
+      result.push([round(lon), round(lat)]);
+      previous = [lon, lat];
     }
-    current.push(coordinate);
   }
-  if (current.length > 1) segments.push(current);
-  return segments
-    .map((segment) => {
-      const [firstX, firstY] = xy(segment[0]);
-      const body = segment
-        .slice(1)
-        .map((point) => {
-          const [x, y] = xy(point);
-          return `L${x.toFixed(1)} ${y.toFixed(1)}`;
-        })
-        .join("");
-      return `M${firstX.toFixed(1)} ${firstY.toFixed(1)}${body}${close ? "Z" : ""}`;
-    })
-    .join("");
+  const last = line[line.length - 1];
+  if (last && result.length && (result[result.length - 1][0] !== round(last[0]) || result[result.length - 1][1] !== round(last[1]))) {
+    result.push([round(last[0]), round(last[1])]);
+  }
+  return result.length > 1 ? result : [];
 }
 
-function pathFromGeometry(geometry, close) {
-  if (!geometry) return "";
-  if (geometry.type === "Polygon") {
-    return geometry.coordinates.map((ring) => pathFromLine(ring, close)).join("");
-  }
+function geometryPolygons(geometry) {
+  if (!geometry) return [];
+  if (geometry.type === "Polygon") return [geometry.coordinates.map(simplifyLine).filter((ring) => ring.length > 2)];
   if (geometry.type === "MultiPolygon") {
-    return geometry.coordinates.flatMap((polygon) => polygon.map((ring) => pathFromLine(ring, close))).join("");
+    return geometry.coordinates.map((polygon) => polygon.map(simplifyLine).filter((ring) => ring.length > 2));
   }
-  if (geometry.type === "LineString") {
-    return pathFromLine(geometry.coordinates, close);
-  }
-  if (geometry.type === "MultiLineString") {
-    return geometry.coordinates.map((line) => pathFromLine(line, close)).join("");
-  }
-  return "";
+  return [];
 }
 
 const countries = topojson.feature(countriesTopology, countriesTopology.objects.countries);
 const borders = topojson.mesh(countriesTopology, countriesTopology.objects.countries, (a, b) => a !== b);
-const landPaths = countries.features.map((item) => pathFromGeometry(item.geometry, true)).join("");
-const borderPaths = pathFromGeometry(borders, false);
+const land = countries.features.flatMap((item) => geometryPolygons(item.geometry)).filter((polygon) => polygon.length);
+const borderLines = borders.coordinates.map(simplifyLine).filter((line) => line.length > 1);
 
-const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">
-  <rect width="${width}" height="${height}" fill="#d8e4e1"/>
-  <path d="${landPaths}" fill="#d9cf78" stroke="#6e857b" stroke-width="1.15" stroke-linejoin="round" stroke-linecap="round"/>
-  <path d="${borderPaths}" fill="none" stroke="#687a72" stroke-width="0.85" stroke-linejoin="round" stroke-linecap="round" opacity="0.82"/>
-</svg>
-`;
+const payload = {
+  version: 1,
+  projection: "EPSG:3857",
+  source: "Natural Earth countries-10m via world-atlas",
+  land,
+  borders: borderLines
+};
 
-fs.mkdirSync(path.dirname(svgOutput), { recursive: true });
-fs.writeFileSync(svgOutput, svg, "utf8");
-const stats = fs.statSync(svgOutput);
-console.log(`${svgOutput} ${stats.size} bytes`);
+fs.mkdirSync(path.dirname(jsonOutput), { recursive: true });
+fs.writeFileSync(jsonOutput, JSON.stringify(payload), "utf8");
+const stats = fs.statSync(jsonOutput);
+console.log(`${jsonOutput} ${stats.size} bytes, ${land.length} land polygons, ${borderLines.length} border lines`);

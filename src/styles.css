@@ -462,8 +462,16 @@ h2 {
   background: #d8e2df;
 }
 
-.offline-world-tile {
+.offline-world-canvas {
+  position: absolute;
   pointer-events: none;
+  user-select: none;
+}
+
+.offline-world-image {
+  pointer-events: none;
+  image-rendering: auto;
+  user-select: none;
 }
 
 .leaflet-tooltip {
