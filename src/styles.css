@@ -462,15 +462,8 @@ h2 {
   background: #d8e2df;
 }
 
-.offline-world-canvas {
-  position: absolute;
+.offline-world-tile {
   pointer-events: none;
-  user-select: none;
-}
-
-.offline-world-image {
-  pointer-events: none;
-  image-rendering: auto;
   user-select: none;
 }
 
