@@ -1,0 +1,4 @@
+{
+  "version": "bootstrap",
+  "description": "npm run build:orbit downloads the official Orekit data snapshot into this directory."
+}

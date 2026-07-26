@@ -1,11 +1,15 @@
-import React from "react";
+import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import "leaflet/dist/leaflet.css";
-import "./styles.css";
 import { App } from "./App";
+import { installBrowserFallback } from "./services/browserFallback";
+import { installWebViewBridge } from "./services/webviewBridge";
+import "./styles.css";
+
+installWebViewBridge();
+installBrowserFallback();
 
 createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
+  <StrictMode>
     <App />
-  </React.StrictMode>
+  </StrictMode>
 );
