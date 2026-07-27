@@ -195,6 +195,7 @@ export type H3Settings = {
   visible: boolean;
   resolution: number;
   maxCells: number;
+  displayMaxCells: number;
 };
 
 export type Selection = {

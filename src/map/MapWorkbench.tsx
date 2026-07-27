@@ -43,6 +43,7 @@ const OVERLAP_ROLE_COLORS = {
 const BASE_LABEL_CHARACTERS = Array.from({ length: 95 }, (_, index) => String.fromCharCode(index + 32));
 const CHINA_SOURCE_ID = "china-standard-map";
 const CHINA_LAYER_IDS = ["china-standard-fill", "china-standard-provinces", "china-standard-border", "china-standard-maritime"] as const;
+const H3_MINIMUM_DETAIL_ZOOM = [1, 1, 2, 3, 4, 5, 7, 8.5, 11, 12.5, 13.5, 14.5, 15.5, 16] as const;
 
 let protocolInstalled = false;
 const pmtilesProtocol = new Protocol();
@@ -194,8 +195,16 @@ export function MapWorkbench() {
     container.appendChild(editPreviewSvg);
 
     const h3Worker = new Worker(new URL("../workers/h3.worker.ts", import.meta.url), { type: "module" });
-    let h3Cells: string[] = [];
+    let h3Chunks: string[][] = [];
+    let h3PendingChunks: string[][] = [];
     let h3RequestId = 0;
+    let h3IdleRequestId = 0;
+    let h3ChunkFrame: number | null = null;
+    let h3DisplayedCells = 0;
+    let h3EstimatedCells = 0;
+    let h3StreamClipped = false;
+    let h3StreamComplete = false;
+    let h3StreamResolution = 0;
     let previewStripe: Stripe | null = null;
     let draftPoints: GeoPoint[] = [];
     let cityLabels: Array<{ lon: number; lat: number; name: string; population: number }> = [];
@@ -227,6 +236,7 @@ export function MapWorkbench() {
       .map((asset) => ({ asset, boundary: geodesicCircle(asset.location, asset.radiusKm, 72) }));
     let frame: number | null = null;
     let handleFrame: number | null = null;
+    let destroyed = false;
     let handleRenderKey = "";
     let drag:
       | {
@@ -303,17 +313,19 @@ export function MapWorkbench() {
 
 
     const scheduleRender = () => {
-      if (frame !== null) return;
+      if (destroyed || frame !== null) return;
       frame = window.requestAnimationFrame(() => {
         frame = null;
+        if (destroyed) return;
         render();
       });
     };
 
     const scheduleHandleUpdate = () => {
-      if (handleFrame !== null) return;
+      if (destroyed || handleFrame !== null) return;
       handleFrame = window.requestAnimationFrame(() => {
         handleFrame = null;
+        if (destroyed) return;
         updateHandles();
       });
     };
@@ -680,20 +692,21 @@ export function MapWorkbench() {
             highPrecision: true,
             pickable: false
           }),
-          new H3HexagonLayer({
-            id: "h3-grid",
-            data: state.layerVisibility.h3 && state.h3.visible ? h3Cells : [],
+          ...(state.layerVisibility.h3 && state.h3.visible ? h3Chunks : []).map((cells, index) => new H3HexagonLayer({
+            id: `h3-grid-${index}`,
+            data: cells,
             getHexagon: (cell) => cell,
             getFillColor: [42, 117, 142, 7],
-            getLineColor: [42, 117, 142, state.h3.resolution >= 10 ? 205 : 125],
-            getLineWidth: state.h3.resolution >= 10 ? 0.75 : 1,
+            getLineColor: [42, 117, 142, state.h3.resolution >= 10 ? 205 : 145],
+            getLineWidth: state.h3.resolution >= 10 ? 0.8 : 1,
             lineWidthUnits: "pixels",
+            lineWidthMinPixels: 0.75,
             filled: true,
             extruded: false,
             stroked: true,
-            highPrecision: true,
+            highPrecision: "auto",
             pickable: false
-          }),
+          })),
           new PathLayer({
             id: "draft-line",
             data: draftPoints.length ? [{ points: draftPoints }] : [],
@@ -898,14 +911,54 @@ export function MapWorkbench() {
       scheduleHandleUpdate();
     };
 
+    const updateH3Status = () => {
+      const visible = h3DisplayedCells.toLocaleString("zh-CN");
+      const total = h3EstimatedCells.toLocaleString("zh-CN");
+      const suffix = h3StreamComplete && !h3PendingChunks.length ? "" : "，正在渐进显示";
+      useWorkbenchStore.getState().setStatus(h3StreamClipped
+        ? `H3 ${h3StreamResolution} 级：显示中心区域 ${visible} / 预计 ${total} 个网格，层级未降低${suffix}`
+        : `H3 ${h3StreamResolution} 级：${visible} 个网格${suffix}`);
+    };
+
+    const scheduleH3Chunk = () => {
+      if (destroyed || h3ChunkFrame !== null || !h3PendingChunks.length) return;
+      const requestId = h3RequestId;
+      h3ChunkFrame = window.requestAnimationFrame(() => {
+        h3ChunkFrame = null;
+        if (destroyed || requestId !== h3RequestId) return;
+        const chunk = h3PendingChunks.shift();
+        if (!chunk) return;
+        h3Chunks = [...h3Chunks, chunk];
+        h3DisplayedCells += chunk.length;
+        scheduleRender();
+        updateH3Status();
+        scheduleH3Chunk();
+      });
+    };
+
     const updateH3 = () => {
       const state = useWorkbenchStore.getState();
+      h3RequestId += 1;
+      if (h3ChunkFrame !== null) {
+        window.cancelAnimationFrame(h3ChunkFrame);
+        h3ChunkFrame = null;
+      }
+      h3PendingChunks = [];
+      h3DisplayedCells = 0;
+      h3EstimatedCells = 0;
+      h3StreamClipped = false;
+      h3StreamComplete = false;
+      h3StreamResolution = state.h3.resolution;
       if (!state.h3.visible || !state.layerVisibility.h3) {
-        if (h3Cells.length) {
-          h3Cells = [];
+        if (h3Chunks.length) {
+          h3Chunks = [];
           scheduleRender();
         }
         return;
+      }
+      if (h3Chunks.length) {
+        h3Chunks = [];
+        scheduleRender();
       }
       const bounds = map.getBounds();
       const rawWest = bounds.getWest();
@@ -913,13 +966,35 @@ export function MapWorkbench() {
       const fullWorld = rawEast - rawWest >= 360;
       const west = fullWorld ? -180 : normalizeViewLon(rawWest);
       const east = fullWorld ? 180 : normalizeViewLon(rawEast);
-      h3RequestId += 1;
       h3Worker.postMessage({
         id: h3RequestId,
         resolution: state.h3.resolution,
-        maxCells: state.h3.maxCells,
+        maxCells: state.h3.displayMaxCells,
         bounds: { west, south: Math.max(-85, bounds.getSouth()), east, north: Math.min(85, bounds.getNorth()) }
       });
+    };
+
+    const ensureH3DetailZoom = () => {
+      const state = useWorkbenchStore.getState();
+      if (!state.h3.visible || !state.layerVisibility.h3) return false;
+      const minimumZoom = H3_MINIMUM_DETAIL_ZOOM[state.h3.resolution] ?? 16;
+      if (map.getZoom() >= minimumZoom - 0.05) return false;
+      const selectedStripe = state.selection?.kind === "stripe"
+        ? state.stripes.find((stripe) => stripe.id === state.selection?.id)
+        : undefined;
+      const center = selectedStripe ? pointArrayNear(stripeCenter(selectedStripe.corners), map.getCenter().lng) : map.getCenter().toArray();
+      useWorkbenchStore.getState().setStatus(`H3 ${state.h3.resolution} 级正在定位到可辨识比例尺`);
+      map.easeTo({ center, zoom: minimumZoom, duration: 320 });
+      return true;
+    };
+
+    const updateH3AfterMapIdle = () => {
+      const idleRequestId = ++h3IdleRequestId;
+      const run = () => {
+        if (!destroyed && idleRequestId === h3IdleRequestId) updateH3();
+      };
+      if (map.areTilesLoaded()) run();
+      else map.once("idle", run);
     };
 
     const focusSelectionWhenOutside = () => {
@@ -986,12 +1061,23 @@ export function MapWorkbench() {
     };
 
     h3Worker.onmessage = (event) => {
-      if (event.data.id !== h3RequestId) return;
+      if (destroyed || event.data.id !== h3RequestId) return;
       if (event.data.ok) {
-        h3Cells = event.data.cells;
-        useWorkbenchStore.getState().setStatus(`H3 ${useWorkbenchStore.getState().h3.resolution} 级：${h3Cells.length.toLocaleString("zh-CN")} 个网格`);
+        h3EstimatedCells = event.data.estimatedCells;
+        h3StreamClipped ||= event.data.clipped;
+        h3StreamResolution = useWorkbenchStore.getState().h3.resolution;
+        if (event.data.kind === "chunk") {
+          const renderChunkSize = 1_500;
+          for (let index = 0; index < event.data.cells.length; index += renderChunkSize) {
+            h3PendingChunks.push(event.data.cells.slice(index, index + renderChunkSize));
+          }
+          scheduleH3Chunk();
+        } else {
+          h3StreamComplete = true;
+          if (!h3PendingChunks.length) updateH3Status();
+        }
       } else {
-        h3Cells = [];
+        h3Chunks = [];
         if (event.data.reason === "too-many") {
           useWorkbenchStore.getState().setStatus(`当前范围预计 ${event.data.estimatedCells.toLocaleString("zh-CN")} 个 H3 网格，请缩小地图范围；层级不会自动降低`);
         }
@@ -1131,8 +1217,8 @@ export function MapWorkbench() {
       if (state.stripes !== previous.stripes || state.layerVisibility.stripes !== previous.layerVisibility.stripes) syncStripeSource();
       if (state.selection !== previous.selection) syncStripeSource();
       if (state.selection !== previous.selection || state.stripes !== previous.stripes || state.toolMode !== previous.toolMode) scheduleHandleUpdate();
-      if (state.h3.visible !== previous.h3.visible || state.h3.resolution !== previous.h3.resolution || state.h3.maxCells !== previous.h3.maxCells || state.layerVisibility.h3 !== previous.layerVisibility.h3) {
-        updateH3();
+      if (state.h3.visible !== previous.h3.visible || state.h3.resolution !== previous.h3.resolution || state.h3.displayMaxCells !== previous.h3.displayMaxCells || state.layerVisibility.h3 !== previous.layerVisibility.h3) {
+        if (!ensureH3DetailZoom()) updateH3();
       }
       if (state.toolMode !== "draw-stripe" && previous.toolMode === "draw-stripe") {
         draftPoints = [];
@@ -1158,21 +1244,23 @@ export function MapWorkbench() {
       editPreviewSvg.style.visibility = "visible";
       handleRenderKey = "";
       scheduleHandleUpdate();
-      updateH3();
+      updateH3AfterMapIdle();
       scheduleRender();
     });
     map.on("zoomend", scheduleRender);
     map.once("load", () => {
+      if (destroyed) return;
       styleReady = true;
       applyProjection(useWorkbenchStore.getState().viewMode);
       ensureStripeLayers();
       syncStripeSource();
       render();
-      updateH3();
+      if (!ensureH3DetailZoom()) updateH3AfterMapIdle();
     });
     fetch(assetUrl("maps/cities.json"))
       .then((response) => response.ok ? response.json() : [])
       .then((cities) => {
+        if (destroyed) return;
         cityLabels = Array.isArray(cities) ? cities : [];
         refreshCharacterSet();
         scheduleRender();
@@ -1181,6 +1269,7 @@ export function MapWorkbench() {
     fetch(assetUrl("maps/country-labels.json"))
       .then((response) => response.ok ? response.json() : [])
       .then((countries) => {
+        if (destroyed) return;
         countryLabels = Array.isArray(countries)
           ? countries.filter((country) => !/中华民国|台湾|臺灣|Taiwan|Republic of China/i.test(String(country?.name ?? "")))
           : [];
@@ -1191,6 +1280,7 @@ export function MapWorkbench() {
     fetch(assetUrl("maps/china-standard-labels.json"))
       .then((response) => response.ok ? response.json() : [])
       .then((labels) => {
+        if (destroyed) return;
         chinaLabels = Array.isArray(labels) ? labels : [];
         refreshCharacterSet();
         scheduleRender();
@@ -1198,9 +1288,13 @@ export function MapWorkbench() {
       .catch(() => undefined);
 
     return () => {
+      destroyed = true;
+      h3IdleRequestId += 1;
+      h3RequestId += 1;
       unsubscribe();
       if (frame !== null) window.cancelAnimationFrame(frame);
       if (handleFrame !== null) window.cancelAnimationFrame(handleFrame);
+      if (h3ChunkFrame !== null) window.cancelAnimationFrame(h3ChunkFrame);
       h3Worker.terminate();
       window.removeEventListener("keydown", onDrawingKeyDown);
       map.remove();

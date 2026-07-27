@@ -30,7 +30,7 @@ npm run build
 npm run dist:win
 ```
 
-输出路径为 `release/Stripe-Setup-0.3.2-x64.exe`。系统需具备 Microsoft Edge WebView2 Runtime；当前 Windows 10/11 通常已随 Edge 安装。
+输出路径为 `release/Stripe-Setup-0.3.3-x64.exe`。系统需具备 Microsoft Edge WebView2 Runtime；当前 Windows 10/11 通常已随 Edge 安装。
 
 中国标准地图表达层用于规划显示，覆盖台湾省、钓鱼岛、南海诸岛及相关边界表达，不参与轨道、坐标和面积计算。全球底图来自 Natural Earth，中国行政区划参考几何来自阿里云 DataV 边界服务。
 

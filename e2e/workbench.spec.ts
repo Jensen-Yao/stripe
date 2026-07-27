@@ -44,9 +44,34 @@ test("opens analysis controls and preserves H3 level 13", async ({ page }) => {
   const level = page.getByLabel("层级 0-13");
   await level.fill("13");
   await expect(level).toHaveValue("13");
-  await expect(page.getByText(/不会自动降低层级/)).toBeVisible();
+  await expect(page.getByLabel("显示上限")).toHaveValue("500000");
+  await expect(page.getByText(/高层级自动进入可辨识比例尺/)).toBeVisible();
   await expect(page.getByTestId("coverage-fov-summary")).toContainText("矩形 10.0° × 2.0°");
   await expect(page.getByTestId("coverage-fov-summary")).toContainText("等待轨道样本");
+});
+
+test("keeps level 9 H3 visible by clipping oversized views", async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as Window & { __h3LongTasks?: number[] }).__h3LongTasks = [];
+    new PerformanceObserver((list) => {
+      const values = (window as Window & { __h3LongTasks?: number[] }).__h3LongTasks!;
+      for (const entry of list.getEntries()) values.push(entry.duration);
+    }).observe({ entryTypes: ["longtask"] });
+  });
+  await page.goto("/");
+  await page.getByTestId("tab-analysis").click();
+  await page.getByRole("button", { name: "生成条带" }).click();
+  await page.evaluate(() => { (window as Window & { __h3LongTasks?: number[] }).__h3LongTasks = []; });
+  await page.getByLabel("层级 0-13").fill("9");
+  await page.getByText("显示网格", { exact: true }).locator("input").check();
+  await expect(page.getByText(/H3 9 级：/)).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator(".map-workbench canvas").first()).toBeVisible();
+  await page.waitForTimeout(500);
+  const longTasks = await page.evaluate(() => (window as Window & { __h3LongTasks?: number[] }).__h3LongTasks ?? []);
+  const loadingSpikes = longTasks.filter((value) => value > 220);
+  expect(loadingSpikes.length, `H3 渐进显示出现持续峰值：${longTasks.map((value) => value.toFixed(1)).join(", ")} ms`).toBeLessThanOrEqual(1);
+  expect(Math.max(0, ...longTasks), `H3 渐进显示最长任务：${longTasks.map((value) => value.toFixed(1)).join(", ")} ms`).toBeLessThanOrEqual(450);
+  await page.screenshot({ path: "test-results/h3-level-9-visible.png" });
 });
 
 test("generates editable stripes and reports exact overlap", async ({ page }) => {

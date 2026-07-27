@@ -465,7 +465,8 @@ function AnalysisTab() {
     <h3>H3 网格</h3>
     <label className="check-field"><input type="checkbox" checked={h3.visible} onChange={(event) => useWorkbenchStore.getState().setH3({ visible: event.target.checked })} />显示网格</label>
     <NumberField label="层级 0-13" value={h3.resolution} onChange={(resolution) => useWorkbenchStore.getState().setH3({ resolution: Math.min(13, Math.max(0, Math.round(resolution))) })} />
-    <p className="section-note">不会自动降低层级。范围超过 {h3.maxCells.toLocaleString("zh-CN")} 个网格时要求缩小 AOI。</p>
+    <label className="field-row"><span>显示上限</span><select value={h3.displayMaxCells} onChange={(event) => useWorkbenchStore.getState().setH3({ displayMaxCells: Number(event.target.value) })}><option value={200000}>20 万（流畅）</option><option value={500000}>50 万（推荐）</option><option value={1000000}>100 万（高负载）</option></select></label>
+    <p className="section-note">保持真实层级，不会自动降级。高层级自动进入可辨识比例尺；超限时渐进显示视野中心区域。</p>
     <h3>参数生成条带</h3>
     <div className="compact-grid">
       {Object.entries(parameters).map(([key, value]) => <label key={key}><span>{{centerLon:'中心经度',centerLat:'中心纬度',lengthKm:'长度 km',widthKm:'宽度 km',headingDeg:'方位角'}[key as keyof typeof parameters]}</span><input type="number" value={value} onChange={(event) => setParameters((current) => ({ ...current, [key]: Number(event.target.value) }))} /></label>)}
