@@ -94,6 +94,7 @@ export function fromEnu(offset: Vec3, origin: GeoPoint): GeoPoint {
 }
 
 export function stripeCenter(corners: readonly GeoPoint[]) {
+  if (!corners.length) return { lon: 0, lat: 0, heightKm: 0 };
   const ecef = corners.map(geodeticToEcef);
   const average = ecef.reduce(
     (sum, point) => ({ x: sum.x + point.x / ecef.length, y: sum.y + point.y / ecef.length, z: sum.z + point.z / ecef.length }),
@@ -144,13 +145,9 @@ export function transformStripe(
 }
 
 export function scaleStripeAxes(corners: Stripe["corners"], lengthFactor: number, widthFactor: number) {
-  const center = stripeCenter(corners);
+  const frame = stripeFrame(corners);
+  const { center, along, across } = frame;
   const local = corners.map((corner) => toEnu(corner, center));
-  const front = { x: (local[0].x + local[1].x) / 2, y: (local[0].y + local[1].y) / 2 };
-  const back = { x: (local[2].x + local[3].x) / 2, y: (local[2].y + local[3].y) / 2 };
-  const length = Math.max(1e-9, Math.hypot(front.x - back.x, front.y - back.y));
-  const along = { x: (front.x - back.x) / length, y: (front.y - back.y) / length };
-  const across = { x: along.y, y: -along.x };
   return local.map((point) => {
     const alongDistance = point.x * along.x + point.y * along.y;
     const acrossDistance = point.x * across.x + point.y * across.y;
@@ -163,6 +160,15 @@ export function scaleStripeAxes(corners: Stripe["corners"], lengthFactor: number
       center
     ), heightKm: corners[0].heightKm ?? 0 };
   }) as Stripe["corners"];
+}
+
+export function geodesicCircle(center: GeoPoint, radiusKm: number, segments = 72) {
+  const radius = Math.max(0, radiusKm);
+  if (radius <= 0) return [];
+  return Array.from({ length: Math.max(12, segments) }, (_value, index) => {
+    const angle = (index / Math.max(12, segments)) * Math.PI * 2;
+    return fromEnu({ x: Math.sin(angle) * radius, y: Math.cos(angle) * radius, z: 0 }, center);
+  });
 }
 
 export function haversineKm(a: GeoPoint, b: GeoPoint) {
@@ -202,23 +208,121 @@ function ringArea(ring: readonly number[][][][]) {
   }, 0);
 }
 
-export function stripeMetrics(corners: Stripe["corners"]) {
+function signedArea2d(points: readonly Vec2[]) {
+  let area = 0;
+  for (let index = 0; index < points.length; index += 1) {
+    const current = points[index];
+    const next = points[(index + 1) % points.length];
+    area += current.x * next.y - next.x * current.y;
+  }
+  return area / 2;
+}
+
+function orientation(a: Vec2, b: Vec2, c: Vec2) {
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+}
+
+function pointOnSegment(point: Vec2, a: Vec2, b: Vec2) {
+  return Math.abs(orientation(a, b, point)) < 1e-9
+    && point.x >= Math.min(a.x, b.x) - 1e-9 && point.x <= Math.max(a.x, b.x) + 1e-9
+    && point.y >= Math.min(a.y, b.y) - 1e-9 && point.y <= Math.max(a.y, b.y) + 1e-9;
+}
+
+function segmentsIntersect(a: Vec2, b: Vec2, c: Vec2, d: Vec2) {
+  const abC = orientation(a, b, c);
+  const abD = orientation(a, b, d);
+  const cdA = orientation(c, d, a);
+  const cdB = orientation(c, d, b);
+  if (((abC > 0 && abD < 0) || (abC < 0 && abD > 0)) && ((cdA > 0 && cdB < 0) || (cdA < 0 && cdB > 0))) return true;
+  return pointOnSegment(c, a, b) || pointOnSegment(d, a, b) || pointOnSegment(a, c, d) || pointOnSegment(b, c, d);
+}
+
+export function validateStripePolygon(corners: readonly GeoPoint[]) {
+  if (corners.length < 3) return { valid: false, reason: "条带至少需要 3 个节点" };
+  if (corners.some((point) => !Number.isFinite(point.lon) || !Number.isFinite(point.lat) || point.lat < -90 || point.lat > 90)) {
+    return { valid: false, reason: "条带包含无效经纬度" };
+  }
+  const unique = new Set(corners.map((point) => `${normalizeLon(point.lon).toFixed(10)},${point.lat.toFixed(10)}`));
+  if (unique.size < 3 || unique.size !== corners.length) return { valid: false, reason: "条带节点存在重复" };
   const center = stripeCenter(corners);
+  const local = corners.map((point) => toEnu(point, center));
+  if (Math.abs(signedArea2d(local)) < 1e-8) return { valid: false, reason: "条带面积过小或节点共线" };
+  for (let first = 0; first < local.length; first += 1) {
+    const firstNext = (first + 1) % local.length;
+    for (let second = first + 1; second < local.length; second += 1) {
+      const secondNext = (second + 1) % local.length;
+      if (first === second || firstNext === second || secondNext === first) continue;
+      if (first === 0 && secondNext === 0) continue;
+      if (segmentsIntersect(local[first], local[firstNext], local[second], local[secondNext])) {
+        return { valid: false, reason: `条带边界在第 ${first + 1} 与第 ${second + 1} 条边自相交` };
+      }
+    }
+  }
+  return { valid: true };
+}
+
+export function stripeFrame(corners: readonly GeoPoint[]) {
+  const center = stripeCenter(corners);
+  const local = corners.map((corner) => toEnu(corner, center));
+  const mean = local.reduce((sum, point) => ({ x: sum.x + point.x / local.length, y: sum.y + point.y / local.length }), { x: 0, y: 0 });
+  let xx = 0;
+  let yy = 0;
+  let xy = 0;
+  local.forEach((point) => {
+    const x = point.x - mean.x;
+    const y = point.y - mean.y;
+    xx += x * x;
+    yy += y * y;
+    xy += x * y;
+  });
+  let angle = 0.5 * Math.atan2(2 * xy, xx - yy);
+  if (Math.abs(xx - yy) < 1e-12 && Math.abs(xy) < 1e-12 && local.length > 1) {
+    const longest = local.map((point, index) => {
+      const next = local[(index + 1) % local.length];
+      return { angle: Math.atan2(next.y - point.y, next.x - point.x), length: Math.hypot(next.x - point.x, next.y - point.y) };
+    }).sort((a, b) => b.length - a.length)[0];
+    angle = longest?.angle ?? 0;
+  }
+  let along = { x: Math.cos(angle), y: Math.sin(angle) };
+  let across = { x: -along.y, y: along.x };
+  const extents = () => {
+    const alongValues = local.map((point) => point.x * along.x + point.y * along.y);
+    const acrossValues = local.map((point) => point.x * across.x + point.y * across.y);
+    return {
+      minAlong: Math.min(...alongValues), maxAlong: Math.max(...alongValues),
+      minAcross: Math.min(...acrossValues), maxAcross: Math.max(...acrossValues)
+    };
+  };
+  let bounds = extents();
+  if (bounds.maxAcross - bounds.minAcross > bounds.maxAlong - bounds.minAlong) {
+    along = across;
+    across = { x: -along.y, y: along.x };
+    bounds = extents();
+  }
+  const rawHeading = (Math.atan2(along.x, along.y) * 180) / Math.PI;
+  const headingDeg = ((rawHeading % 180) + 180) % 180;
+  if (Math.abs(rawHeading - headingDeg) > 90) {
+    along = { x: -along.x, y: -along.y };
+    across = { x: -across.x, y: -across.y };
+    bounds = extents();
+  }
+  return { center, along, across, ...bounds, headingDeg };
+}
+
+export function stripeMetrics(corners: Stripe["corners"]) {
+  const frame = stripeFrame(corners);
+  const { center } = frame;
   const projected = corners.map((corner) => laea(corner, center));
   const polygon = [[projected.map((point) => [point.x, point.y])]];
-  const edgeA = (haversineKm(corners[0], corners[1]) + haversineKm(corners[2], corners[3])) / 2;
-  const edgeB = (haversineKm(corners[1], corners[2]) + haversineKm(corners[3], corners[0])) / 2;
-  const lengthAlongB = edgeB >= edgeA;
-  const frontPair = lengthAlongB ? [corners[0], corners[1]] : [corners[1], corners[2]];
-  const backPair = lengthAlongB ? [corners[2], corners[3]] : [corners[3], corners[0]];
-  const front = stripeCenter(frontPair);
-  const back = stripeCenter(backPair);
+  const perimeterKm = corners.reduce((sum, point, index) => sum + haversineKm(point, corners[(index + 1) % corners.length]), 0);
   return {
     center,
-    lengthKm: Math.max(edgeA, edgeB),
-    widthKm: Math.min(edgeA, edgeB),
+    lengthKm: frame.maxAlong - frame.minAlong,
+    widthKm: frame.maxAcross - frame.minAcross,
     areaKm2: ringArea(polygon),
-    headingDeg: bearingDeg(back, front)
+    perimeterKm,
+    vertexCount: corners.length,
+    headingDeg: frame.headingDeg
   };
 }
 

@@ -1,6 +1,6 @@
 import type { CoordinateOrder, GeoPoint, Stripe } from "./types";
 import { makeId } from "./id";
-import { haversineKm, normalizePoint, stripeCenter, toEnu } from "./geometry";
+import { normalizePoint, stripeCenter, toEnu, validateStripePolygon } from "./geometry";
 
 type Pair = [number, number];
 
@@ -36,29 +36,18 @@ function sortClockwise(points: GeoPoint[]) {
   });
 }
 
-function isConvex(points: GeoPoint[]) {
-  const center = stripeCenter(points);
-  const local = points.map((point) => toEnu(point, center));
-  const signs = local.map((point, index) => {
-    const next = local[(index + 1) % local.length];
-    const after = local[(index + 2) % local.length];
-    return Math.sign((next.x - point.x) * (after.y - next.y) - (next.y - point.y) * (after.x - next.x));
-  }).filter((sign) => sign !== 0);
-  return signs.length === 4 && signs.every((sign) => sign === signs[0]);
-}
-
 function normalizeRing(ring: Pair[], order: CoordinateOrder): Stripe["corners"] | null {
-  const withoutClosing = ring.length > 4 && ring[0][0] === ring.at(-1)?.[0] && ring[0][1] === ring.at(-1)?.[1] ? ring.slice(0, -1) : ring;
-  if (withoutClosing.length !== 4) return null;
+  const withoutClosing = ring.length > 3 && ring[0][0] === ring.at(-1)?.[0] && ring[0][1] === ring.at(-1)?.[1] ? ring.slice(0, -1) : ring;
+  if (withoutClosing.length < 3) return null;
   const values = withoutClosing.map((pair) => pairToPoint(pair, order));
   if (values.some((point) => point === null)) return null;
   const points = values as GeoPoint[];
-  const unique = new Set(points.map((point) => `${point.lon.toFixed(10)},${point.lat.toFixed(10)}`));
-  if (unique.size !== 4) return null;
-  const sorted = sortClockwise(points);
-  if (!isConvex(sorted)) return null;
-  if (haversineKm(sorted[0], sorted[1]) > haversineKm(sorted[1], sorted[2])) sorted.push(sorted.shift()!);
-  return sorted as Stripe["corners"];
+  if (validateStripePolygon(points).valid) return points;
+  if (points.length === 4) {
+    const sorted = sortClockwise(points);
+    if (validateStripePolygon(sorted).valid) return sorted;
+  }
+  return null;
 }
 
 function stripesFromRings(rings: Pair[][], order: CoordinateOrder) {
@@ -114,11 +103,9 @@ export function parseStripeInput(text: string, order: CoordinateOrder) {
     const lineRings = trimmed
       .split(/\r?\n/)
       .map(pairsFromText)
-      .filter((ring) => ring.length === 4 || ring.length === 5);
+      .filter((ring) => ring.length >= 3);
     if (lineRings.length) return stripesFromRings(lineRings, order);
     const pairs = pairsFromText(trimmed);
-    const chunks: Pair[][] = [];
-    for (let index = 0; index + 3 < pairs.length; index += 4) chunks.push(pairs.slice(index, index + 4));
-    return stripesFromRings(chunks, order);
+    return stripesFromRings(pairs.length >= 3 ? [pairs] : [], order);
   }
 }

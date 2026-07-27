@@ -23,6 +23,7 @@ import type {
   Spacecraft
 } from "../domain/types";
 import { isGroundPointInSensorFov, orbitHeadingAtIndex } from "../domain/sensorFov";
+import { fromEnu, geodesicCircle, toEnu } from "../domain/geometry";
 
 type Vector3 = [number, number, number];
 type StateVector = { position: Vector3; velocity: Vector3 };
@@ -252,6 +253,16 @@ function lookAngles(sample: OrbitSample, asset: GroundAsset) {
   return { elevationDeg: degrees(look.elevation), azimuthDeg: degrees(normalizeRadians(look.azimuth)), rangeKm: look.rangeSat };
 }
 
+function targetEvaluationPoints(asset: GroundAsset, sample: OrbitSample, fixedBoundary: GeoPoint[]) {
+  if (asset.kind !== "target" || asset.radiusKm <= 0) return [asset.location];
+  const toward = toEnu(sample, asset.location);
+  const distance = Math.hypot(toward.x, toward.y);
+  const nearest = distance > 1e-9
+    ? fromEnu({ x: toward.x / distance * asset.radiusKm, y: toward.y / distance * asset.radiusKm, z: 0 }, asset.location)
+    : asset.location;
+  return [asset.location, nearest, ...fixedBoundary];
+}
+
 function interpolateCrossing(previous: { sample: OrbitSample; elevationDeg: number }, current: { sample: OrbitSample; elevationDeg: number }, threshold: number) {
   const denominator = current.elevationDeg - previous.elevationDeg;
   const fraction = Math.abs(denominator) < 1e-12 ? 0 : Math.max(0, Math.min(1, (threshold - previous.elevationDeg) / denominator));
@@ -264,13 +275,17 @@ async function computeAccessWindows(requestId: string, payload: AccessPayload) {
   const propagated = await propagateSpacecraft(requestId, payload);
   const windows: AccessWindow[] = [];
   for (const asset of payload.groundAssets) {
+    const fixedBoundary = asset.kind === "target" && asset.radiusKm > 0 ? geodesicCircle(asset.location, asset.radiusKm, 16) : [];
     let active: { startTime: string; max: ReturnType<typeof lookAngles> } | null = null;
     let previous: { sample: OrbitSample; elevationDeg: number; visible: boolean } | null = null;
     for (let index = 0; index < propagated.samples.length; index += 1) {
       if (cancelled.has(requestId)) throw new Error("计算已取消");
       const sample = propagated.samples[index];
-      const look = lookAngles(sample, asset);
-      const sensorVisible = !payload.sensor || isGroundPointInSensorFov(sample, asset.location, payload.sensor, orbitHeadingAtIndex(propagated.samples, index));
+      const evaluationPoints = targetEvaluationPoints(asset, sample, fixedBoundary);
+      const looks = evaluationPoints.map((location) => lookAngles(sample, { ...asset, location }));
+      const look = looks.reduce((best, candidate) => candidate.elevationDeg > best.elevationDeg ? candidate : best);
+      const headingDeg = payload.sensor ? orbitHeadingAtIndex(propagated.samples, index) : 0;
+      const sensorVisible = !payload.sensor || evaluationPoints.some((location) => isGroundPointInSensorFov(sample, location, payload.sensor!, headingDeg));
       const visible = look.elevationDeg >= asset.minElevationDeg && sensorVisible;
       if (visible && !active) {
         const startTime = previous && !previous.visible
@@ -322,7 +337,7 @@ async function computeAccessWindows(requestId: string, payload: AccessPayload) {
 async function handle(request: OrbitRequest): Promise<OrbitResponse> {
   try {
     if (request.command === "health") {
-      return { requestId: request.requestId, ok: true, result: { engine: "Stripe 轻量轨道内核", version: "0.2.0", dataReady: true } };
+      return { requestId: request.requestId, ok: true, result: { engine: "Stripe 轻量轨道内核", version: "0.3.0", dataReady: true } };
     }
     if (request.command === "orbit/propagate") {
       const result = await propagateSpacecraft(request.requestId, request.payload as PropagatePayload);

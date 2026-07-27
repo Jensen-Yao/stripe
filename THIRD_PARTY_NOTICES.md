@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-Stripe 0.2 includes or uses the following permissively licensed components and data:
+Stripe 0.3 includes or uses the following components, services and data:
 
 - Microsoft Edge WebView2 SDK, Microsoft software license terms
 - MapLibre GL JS, BSD-3-Clause
@@ -15,6 +15,7 @@ Stripe 0.2 includes or uses the following permissively licensed components and d
 - Zustand, MIT
 - Lucide, ISC
 - Natural Earth vector map data, public domain
+- Alibaba Cloud DataV administrative boundary service (China cartographic reference layer; redistribution and service use remain subject to the provider terms)
 
 The optional, separately built scientific extension uses Orekit under Apache-2.0. It is not bundled in the lightweight core installer.
 

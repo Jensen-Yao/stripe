@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import initSqlJs from "sql.js";
 import geojsonvt from "geojson-vt";
 import vtpbf from "vt-pbf";
+import polygonClipping from "polygon-clipping";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cacheDir = path.join(root, ".cache", "natural-earth");
@@ -19,7 +20,8 @@ const sources = {
   states: "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_1_states_provinces.geojson",
   lakes: "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_lakes.geojson",
   rivers: "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_rivers_lake_centerlines.geojson",
-  cities: "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_populated_places_simple.geojson"
+  cities: "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_populated_places_simple.geojson",
+  chinaStandard: "https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json"
 };
 
 async function download(url, target) {
@@ -85,7 +87,10 @@ async function buildMbtiles(datasets) {
       { id: "countries", fields: {}, minzoom: 0, maxzoom: maxZoom },
       { id: "states", fields: {}, minzoom: 3, maxzoom: maxZoom },
       { id: "lakes", fields: {}, minzoom: 0, maxzoom: maxZoom },
-      { id: "rivers", fields: {}, minzoom: 2, maxzoom: maxZoom }
+      { id: "rivers", fields: {}, minzoom: 2, maxzoom: maxZoom },
+      { id: "china_national", fields: {}, minzoom: 0, maxzoom: maxZoom },
+      { id: "china_provinces", fields: {}, minzoom: 5, maxzoom: maxZoom },
+      { id: "china_maritime", fields: {}, minzoom: 0, maxzoom: maxZoom }
     ] })
   };
   const metaStatement = db.prepare("INSERT INTO metadata(name, value) VALUES (?, ?)");
@@ -93,7 +98,7 @@ async function buildMbtiles(datasets) {
   metaStatement.free();
   const tileDatasets = Object.fromEntries(
     Object.entries(datasets)
-      .filter(([name]) => name !== "cities")
+      .filter(([name]) => name !== "cities" && name !== "chinaStandard")
       .map(([name, data]) => [name, geometryOnly(data)])
   );
   const indexes = Object.fromEntries(Object.entries(tileDatasets).map(([name, data]) => [name, tileIndex(data)]));
@@ -108,6 +113,7 @@ async function buildMbtiles(datasets) {
         for (const [name, index] of Object.entries(indexes)) {
           if (name === "states" && z < 3) continue;
           if (name === "rivers" && z < 2) continue;
+          if (name === "china_provinces" && z < 5) continue;
           const tile = index.getTile(z, x, y);
           if (tile?.features.length) layers[name] = tile;
         }
@@ -126,8 +132,42 @@ async function buildMbtiles(datasets) {
   db.close();
 }
 
+function prepareChinaStandard(data) {
+  const chinaFeatures = data.features ?? [];
+  const administrative = chinaFeatures.filter((feature) => String(feature.properties?.adcode) !== "100000_JD");
+  const maritime = chinaFeatures.filter((feature) => String(feature.properties?.adcode) === "100000_JD");
+  const asMultiPolygon = (geometry) => geometry?.type === "Polygon" ? [geometry.coordinates] : geometry?.coordinates ?? [];
+  const nationalCoordinates = polygonClipping.union(...administrative.map((feature) => asMultiPolygon(feature.geometry)));
+  const featureCollection = (features) => ({ type: "FeatureCollection", features });
+  const provinceLabels = administrative
+    .filter((feature) => feature.properties?.name !== "台湾省")
+    .map((feature) => ({
+      lon: Number(feature.properties?.center?.[0] ?? feature.properties?.centroid?.[0]),
+      lat: Number(feature.properties?.center?.[1] ?? feature.properties?.centroid?.[1]),
+      name: String(feature.properties?.name ?? ""),
+      minZoom: ["北京市", "天津市", "上海市", "重庆市", "香港特别行政区", "澳门特别行政区"].includes(feature.properties?.name) ? 6 : 5,
+      kind: "province"
+    }))
+    .filter((label) => Number.isFinite(label.lon) && Number.isFinite(label.lat) && label.name);
+  return {
+    tileDatasets: {
+      china_national: featureCollection([{ type: "Feature", properties: {}, geometry: { type: "MultiPolygon", coordinates: nationalCoordinates } }]),
+      china_provinces: featureCollection(administrative.map((feature) => ({ type: "Feature", properties: {}, geometry: feature.geometry }))),
+      china_maritime: featureCollection(maritime.map((feature) => ({ type: "Feature", properties: {}, geometry: feature.geometry })))
+    },
+    labels: [
+      ...provinceLabels,
+      { lon: 121.0, lat: 23.7, name: "台湾省", minZoom: 3, kind: "focus" },
+      { lon: 123.47, lat: 25.75, name: "钓鱼岛", minZoom: 5, kind: "focus" },
+      { lon: 114.2, lat: 13.2, name: "南海诸岛", minZoom: 2.5, kind: "focus" }
+    ]
+  };
+}
+
 async function main() {
   const datasets = await loadSources();
+  const chinaStandard = prepareChinaStandard(datasets.chinaStandard);
+  Object.assign(datasets, chinaStandard.tileDatasets);
   await buildMbtiles(datasets);
   await fs.mkdir(outputDir, { recursive: true });
   const cli = await ensurePmtilesCli();
@@ -151,9 +191,11 @@ async function main() {
       name: feature.properties?.NAME_ZH || feature.properties?.NAME || feature.properties?.ADMIN || "",
       rank: Number(feature.properties?.LABELRANK ?? 9)
     }))
-    .filter((label) => Number.isFinite(label.lon) && Number.isFinite(label.lat) && label.name)
+    .filter((label) => Number.isFinite(label.lon) && Number.isFinite(label.lat) && label.name && !/^(台湾|Taiwan)$/i.test(label.name))
     .sort((a, b) => a.rank - b.rank);
   await fs.writeFile(path.join(outputDir, "country-labels.json"), JSON.stringify(countryLabels), "utf8");
+  await fs.writeFile(path.join(outputDir, "china-standard-labels.json"), JSON.stringify(chinaStandard.labels), "utf8");
+  await fs.rm(path.join(outputDir, "china-standard.geojson"), { force: true });
   await fs.rm(path.join(outputDir, "world-countries.geojson"), { force: true });
   console.log(`Generated ${outputPath}`);
 }

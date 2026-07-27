@@ -101,6 +101,8 @@ button { color: inherit; }
 .rotate-handle-stem { position: absolute; width: 1px; margin-left: -0.5px; background: #1f6176; opacity: 0.72; pointer-events: none; }
 .map-edit-handle { position: absolute; width: 12px; height: 12px; padding: 0; transform: translate(-50%, -50%); border: 1px solid #1f6176; border-radius: 1px; color: #fff; background: #fff; font-size: 0; line-height: 1; text-align: center; cursor: grab; pointer-events: auto; box-shadow: 0 0 0 1px rgb(255 255 255 / 80%), 0 1px 3px rgb(28 42 47 / 28%); touch-action: none; user-select: none; }
 .map-edit-handle:active { cursor: grabbing; }
+.map-edit-handle.handle-insert { width: 8px; height: 8px; border-color: #9a7656; background: #fff7e9; opacity: .9; }
+.map-edit-handle.handle-insert:hover { width: 11px; height: 11px; opacity: 1; }
 .handle-corner { width: 10px; height: 10px; }
 .handle-move { width: 20px; height: 20px; border-radius: 50%; color: #fff; background: #246b84; font-size: 13px; cursor: move; }
 .handle-rotate { width: 22px; height: 22px; border-radius: 50%; color: #225e73; border-color: #225e73; background: #fff; font-size: 17px; }
@@ -135,6 +137,15 @@ button { color: inherit; }
 .toggle-grid label, .check-field { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 .compact-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .command-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+.stripe-command-grid button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 0; font-size: 11px; }
+.vertex-editor { border: 1px solid #d1d9db; border-radius: 4px; background: #f7f9f8; }
+.vertex-editor summary { padding: 7px; color: #53656b; font-size: 11px; cursor: pointer; }
+.vertex-editor > button { width: calc(100% - 12px); margin: 0 6px 6px; }
+.vertex-list { display: grid; gap: 4px; max-height: 220px; overflow: auto; padding: 0 6px 6px; }
+.vertex-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) minmax(0, 1fr) 27px; align-items: center; gap: 4px; }
+.vertex-row span { color: #718086; font: 10px Consolas, monospace; text-align: center; }
+.vertex-row input { width: 100%; min-width: 0; height: 27px; padding: 0 5px; border: 1px solid #c1cbce; border-radius: 3px; font: 10px Consolas, monospace; }
+.vertex-row button { width: 27px; min-height: 27px !important; padding: 0; display: grid; place-items: center; }
 .compact-grid label { display: grid; gap: 3px; font-size: 10px; color: #647277; }
 .compact-grid input { height: 28px; padding: 0 6px; }
 .analysis-results, .window-list { display: grid; gap: 5px; }

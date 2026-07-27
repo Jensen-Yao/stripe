@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useState } from "react";
-import { BarChart3, Clipboard, Orbit, PlayCircle, Plus, ScanLine, Settings2 } from "lucide-react";
-import { coordinatesForOutput, stripeMetrics } from "../domain/geometry";
+import { BarChart3, Clipboard, CopyPlus, Orbit, PlayCircle, Plus, RefreshCw, ScanLine, Settings2, Trash2 } from "lucide-react";
+import { coordinatesForOutput, normalizePoint, stripeCenter, stripeMetrics, transformStripe, validateStripePolygon } from "../domain/geometry";
 import { parseStripeInput } from "../domain/importers";
 import { makeId } from "../domain/id";
 import { closestOrbitSample, createSensorFootprint, formatSensorFov, orbitHeadingAtIndex } from "../domain/sensorFov";
@@ -41,9 +41,39 @@ function ScenarioProperties() {
 
 function StripeProperties({ stripe }: { stripe: Stripe }) {
   const commitStripe = useWorkbenchStore((state) => state.commitStripe);
+  const addStripe = useWorkbenchStore((state) => state.addStripe);
   const [order, setOrder] = useState<CoordinateOrder>("lonlat");
+  const [offset, setOffset] = useState({ distanceKm: 20, bearingDeg: 90 });
   const metrics = stripeMetrics(stripe.corners);
   const output = JSON.stringify(coordinatesForOutput(stripe.corners, order));
+  const commitCorners = (corners: Stripe["corners"], message?: string) => {
+    const validation = validateStripePolygon(corners);
+    if (!validation.valid) {
+      useWorkbenchStore.getState().setStatus(validation.reason ?? "条带边界无效");
+      return;
+    }
+    commitStripe(stripe.id, { ...stripe, corners, updatedAt: new Date().toISOString() });
+    if (message) useWorkbenchStore.getState().setStatus(message);
+  };
+  const duplicateAtOffset = () => {
+    const heading = offset.bearingDeg * Math.PI / 180;
+    const timestamp = new Date().toISOString();
+    const copy: Stripe = {
+      ...stripe,
+      id: makeId("stripe"),
+      name: `${stripe.name} 副本`,
+      corners: transformStripe(stripe.corners, { translateEastKm: Math.sin(heading) * offset.distanceKm, translateNorthKm: Math.cos(heading) * offset.distanceKm }),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    addStripe(copy);
+    useWorkbenchStore.getState().setStatus(`已按 ${offset.bearingDeg.toFixed(1)}° 偏移 ${offset.distanceKm.toFixed(1)} km 复制条带`);
+  };
+  const copyGeoJson = () => navigator.clipboard.writeText(JSON.stringify({
+    type: "Feature",
+    properties: { id: stripe.id, name: stripe.name },
+    geometry: { type: "Polygon", coordinates: [[...coordinatesForOutput(stripe.corners, "lonlat"), coordinatesForOutput(stripe.corners, "lonlat")[0]]] }
+  }));
   return <div className="inspector-section">
     <h3>条带属性</h3>
     <label className="field-row"><span>名称</span><input value={stripe.name} onChange={(event) => commitStripe(stripe.id, { ...stripe, name: event.target.value, updatedAt: new Date().toISOString() })} /></label>
@@ -53,11 +83,46 @@ function StripeProperties({ stripe }: { stripe: Stripe }) {
       <span>中心</span><strong>{metrics.center.lat.toFixed(5)}, {metrics.center.lon.toFixed(5)}</strong>
       <span>长 / 宽</span><strong>{metrics.lengthKm.toFixed(2)} / {metrics.widthKm.toFixed(2)} km</strong>
       <span>面积</span><strong>{metrics.areaKm2.toFixed(2)} km²</strong>
+      <span>周长 / 节点</span><strong>{metrics.perimeterKm.toFixed(2)} km / {metrics.vertexCount}</strong>
       <span>方位</span><strong>{metrics.headingDeg.toFixed(2)}°</strong>
     </div>
     <label className="field-row"><span>坐标顺序</span><select value={order} onChange={(event) => setOrder(event.target.value as CoordinateOrder)}><option value="lonlat">[经度, 纬度]</option><option value="latlon">[纬度, 经度]</option></select></label>
     <textarea className="coordinate-output" readOnly value={output} />
-    <button className="primary-command" onClick={() => void navigator.clipboard.writeText(output)}><Clipboard size={15} />复制坐标</button>
+    <div className="command-grid stripe-command-grid">
+      <button className="primary-command" onClick={() => void navigator.clipboard.writeText(output)}><Clipboard size={15} />复制数组</button>
+      <button onClick={() => void copyGeoJson()}><Clipboard size={15} />复制 GeoJSON</button>
+      <button onClick={() => commitCorners([...stripe.corners].reverse(), "已反转节点顺序")}><RefreshCw size={15} />反转顺序</button>
+    </div>
+    <h3>偏移复制</h3>
+    <div className="compact-grid">
+      <label><span>距离 km</span><input type="number" step="0.1" value={offset.distanceKm} onChange={(event) => setOffset((value) => ({ ...value, distanceKm: Number(event.target.value) }))} /></label>
+      <label><span>方位角 °</span><input type="number" step="1" value={offset.bearingDeg} onChange={(event) => setOffset((value) => ({ ...value, bearingDeg: Number(event.target.value) }))} /></label>
+    </div>
+    <button onClick={duplicateAtOffset}><CopyPlus size={15} />生成偏移副本</button>
+    <details className="vertex-editor">
+      <summary>节点坐标编辑（{stripe.corners.length}）</summary>
+      <div className="vertex-list">
+        {stripe.corners.map((point, index) => <div className="vertex-row" key={`${stripe.updatedAt}-${index}`}>
+          <span>{index + 1}</span>
+          <input aria-label={`节点 ${index + 1} 经度`} type="number" step="0.000001" defaultValue={point.lon} onBlur={(event) => {
+            const corners = [...stripe.corners];
+            corners[index] = normalizePoint({ ...corners[index], lon: Number(event.currentTarget.value) });
+            commitCorners(corners);
+          }} />
+          <input aria-label={`节点 ${index + 1} 纬度`} type="number" step="0.000001" defaultValue={point.lat} onBlur={(event) => {
+            const corners = [...stripe.corners];
+            corners[index] = normalizePoint({ ...corners[index], lat: Number(event.currentTarget.value) });
+            commitCorners(corners);
+          }} />
+          <button title="删除节点" disabled={stripe.corners.length <= 3} onClick={() => commitCorners(stripe.corners.filter((_value, valueIndex) => valueIndex !== index), `已删除第 ${index + 1} 个节点`)}><Trash2 size={13} /></button>
+        </div>)}
+      </div>
+      <button onClick={() => {
+        const last = stripe.corners.at(-1)!;
+        const first = stripe.corners[0];
+        commitCorners([...stripe.corners, stripeCenter([last, first])], "已在末边插入节点");
+      }}><Plus size={14} />在末边插入节点</button>
+    </details>
   </div>;
 }
 
@@ -138,13 +203,16 @@ function SpacecraftProperties({ spacecraft }: { spacecraft: Spacecraft }) {
 function GroundProperties({ asset }: { asset: GroundAsset }) {
   const setGroundAsset = useWorkbenchStore((state) => state.setGroundAsset);
   return <div className="inspector-section">
-    <h3>{asset.kind === "station" ? "地面站" : "目标点"}</h3>
+    <h3>{asset.kind === "station" ? "地面站" : "目标区域"}</h3>
     <label className="field-row"><span>名称</span><input value={asset.name} onChange={(event) => setGroundAsset(asset.id, { name: event.target.value })} /></label>
     <label className="check-field"><input type="checkbox" checked={asset.visible} onChange={(event) => setGroundAsset(asset.id, { visible: event.target.checked })} />显示对象</label>
+    <label className="field-row"><span>对象类型</span><select value={asset.kind} onChange={(event) => setGroundAsset(asset.id, { kind: event.target.value as GroundAsset["kind"], radiusKm: event.target.value === "station" ? 0 : asset.radiusKm })}><option value="target">目标区域</option><option value="station">地面站</option></select></label>
     <NumberField label="经度" value={asset.location.lon} step={0.000001} onChange={(lon) => setGroundAsset(asset.id, { location: { ...asset.location, lon } })} />
     <NumberField label="纬度" value={asset.location.lat} step={0.000001} onChange={(lat) => setGroundAsset(asset.id, { location: { ...asset.location, lat } })} />
     <NumberField label="高度 km" value={asset.location.heightKm ?? 0} step={0.001} onChange={(heightKm) => setGroundAsset(asset.id, { location: { ...asset.location, heightKm } })} />
     <NumberField label="最小仰角" value={asset.minElevationDeg} step={0.5} onChange={(minElevationDeg) => setGroundAsset(asset.id, { minElevationDeg })} />
+    {asset.kind === "target" && <NumberField label="目标半径 km" value={asset.radiusKm} step={0.1} onChange={(radiusKm) => setGroundAsset(asset.id, { radiusKm: Math.max(0, radiusKm) })} />}
+    {asset.kind === "target" && <p className="section-note">访问窗口按目标圆域内任一点满足仰角和传感器约束判定。</p>}
   </div>;
 }
 
@@ -314,7 +382,7 @@ function OrbitTab() {
 }
 
 function AnalysisTab() {
-  const stripes = useWorkbenchStore((state) => state.stripes);
+  const stripeCount = useWorkbenchStore((state) => state.stripes.length);
   const overlaps = useWorkbenchStore((state) => state.overlaps);
   const layers = useWorkbenchStore((state) => state.layerVisibility);
   const h3 = useWorkbenchStore((state) => state.h3);
@@ -345,7 +413,8 @@ function AnalysisTab() {
   const importStripes = async () => {
     try {
       const imported = parseStripeInput(importText, order);
-      if (!imported.length) throw new Error("未找到有效四角条带，请检查坐标顺序、范围、凸性和闭合方式");
+      if (!imported.length) throw new Error("未找到有效条带，请检查坐标顺序、节点数量、范围和边界是否自相交");
+      const stripes = useWorkbenchStore.getState().stripes;
       const nextStripes = [...stripes, ...imported];
       useWorkbenchStore.getState().addStripes(imported);
       if (nextStripes.length > 1) {
@@ -363,12 +432,13 @@ function AnalysisTab() {
   const runOverlap = async () => {
     useWorkbenchStore.getState().setStatus("正在后台分析条带覆盖关系...");
     try {
-      const result = await analyzeOverlaps(stripes);
+      const result = await analyzeOverlaps(useWorkbenchStore.getState().stripes);
       useWorkbenchStore.getState().setOverlaps(result);
       useWorkbenchStore.getState().setStatus(`覆盖关系分析完成：${result.length} 组重叠`);
     } catch (error) { useWorkbenchStore.getState().setStatus(error instanceof Error ? error.message : String(error)); }
   };
   const runCoverage = async () => {
+    const stripes = useWorkbenchStore.getState().stripes;
     const stripe = stripes.find((item) => selection?.kind === "stripe" && item.id === selection.id) ?? stripes[0];
     if (!stripe || !coverageSatellite || !coverageSensor || !coverageSamples.length) {
       useWorkbenchStore.getState().setStatus("覆盖分析需要条带、卫星传感器和已传播的轨道样本");
@@ -386,8 +456,9 @@ function AnalysisTab() {
     <h3>图层显示</h3>
     <label className="field-row"><span>底图</span><select value={baseMapMode} onChange={(event) => useWorkbenchStore.getState().setBaseMapMode(event.target.value as "offline" | "osm")}><option value="offline">离线矢量地图</option><option value="osm">OSM 在线地图</option></select></label>
     <div className="toggle-grid">
-      {([['stripes','条带'],['satellites','卫星'],['groundTracks','轨迹'],['coverage','覆盖 / 视场'],['groundAssets','地面对象']] as const).map(([key, label]) => <label key={key}><input type="checkbox" checked={layers[key]} onChange={(event) => useWorkbenchStore.getState().setLayerVisibility({ [key]: event.target.checked })} />{label}</label>)}
+      {([['chinaStandardMap','中国标准表达'],['stripes','条带'],['satellites','卫星'],['groundTracks','轨迹'],['coverage','覆盖 / 视场'],['groundAssets','地面对象']] as const).map(([key, label]) => <label key={key}><input type="checkbox" checked={layers[key]} onChange={(event) => useWorkbenchStore.getState().setLayerVisibility({ [key]: event.target.checked })} />{label}</label>)}
     </div>
+    <p className="section-note">中国标准表达层用于规划显示，覆盖台湾省、钓鱼岛、南海诸岛及相关边界表达；它不参与坐标和面积计算。</p>
     <h3>H3 网格</h3>
     <label className="check-field"><input type="checkbox" checked={h3.visible} onChange={(event) => useWorkbenchStore.getState().setH3({ visible: event.target.checked })} />显示网格</label>
     <NumberField label="层级 0-13" value={h3.resolution} onChange={(resolution) => useWorkbenchStore.getState().setH3({ resolution: Math.min(13, Math.max(0, Math.round(resolution))) })} />
@@ -402,7 +473,7 @@ function AnalysisTab() {
     <textarea className="import-area" value={importText} onChange={(event) => setImportText(event.target.value)} placeholder="支持数组、CSV、GeoJSON、KML" />
     <button onClick={() => void importStripes()}>导入条带并分析</button>
     <h3>覆盖关系</h3>
-    <button className="primary-command" disabled={stripes.length < 2} onClick={() => void runOverlap()}><BarChart3 size={15} />运行精确重叠分析</button>
+    <button className="primary-command" disabled={stripeCount < 2} onClick={() => void runOverlap()}><BarChart3 size={15} />运行精确重叠分析</button>
     <div className="analysis-results">{overlaps.length ? overlaps.slice(0, 30).map((item) => <button key={item.id} onClick={() => useWorkbenchStore.getState().setSelection({ kind: "stripe", id: item.stripeAId })}><strong>{{ overlap: "部分重叠", a_contains_b: "A 包含 B", b_contains_a: "B 包含 A", same: "完全重合" }[item.relation]}</strong><span>{item.overlapAreaKm2.toFixed(2)} km²</span><small>A {item.overlapPercentOfA.toFixed(1)}% / B {item.overlapPercentOfB.toFixed(1)}%</small></button>) : <p className="empty-state">尚无覆盖分析结果</p>}</div>
     <h3>轨道覆盖统计</h3>
     {coverageSensor && <div className="fov-summary" data-testid="coverage-fov-summary">

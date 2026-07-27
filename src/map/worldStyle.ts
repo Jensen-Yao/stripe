@@ -8,7 +8,7 @@ export function createWorldStyle(pmtilesUrl: string): StyleSpecification {
       world: {
         type: "vector",
         url: `pmtiles://${pmtilesUrl}`,
-        attribution: "Natural Earth / PMTiles"
+        attribution: "Natural Earth / 阿里云 DataV / PMTiles"
       }
     },
     layers: [

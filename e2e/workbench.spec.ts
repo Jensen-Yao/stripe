@@ -3,7 +3,7 @@ import { PNG } from "pngjs";
 
 test("loads the Chinese planning workbench", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByText("卫星规划工作台 0.2")).toBeVisible();
+  await expect(page.getByText("卫星规划工作台 0.3")).toBeVisible();
   await expect(page.getByText("对象浏览器")).toBeVisible();
   await expect(page.getByRole("button", { name: "属性" })).toBeVisible();
   await expect(page.getByText("场景时间线")).toBeVisible();
@@ -57,6 +57,15 @@ test("generates editable stripes and reports exact overlap", async ({ page }) =>
   await page.getByRole("button", { name: "生成条带" }).click();
   const rotateHandle = page.locator(".handle-rotate");
   await expect(rotateHandle).toBeVisible();
+  await expect.poll(async () => {
+    const mapBox = await page.locator(".map-workbench").boundingBox();
+    const rotateBox = await rotateHandle.boundingBox();
+    if (!mapBox || !rotateBox) return false;
+    const centerX = rotateBox.x + rotateBox.width / 2;
+    const centerY = rotateBox.y + rotateBox.height / 2;
+    return centerX > mapBox.x + 72 && centerX < mapBox.x + mapBox.width - 72
+      && centerY > mapBox.y + 72 && centerY < mapBox.y + mapBox.height - 72;
+  }).toBe(true);
   const handleBox = await rotateHandle.boundingBox();
   expect(handleBox).not.toBeNull();
   await page.mouse.move(handleBox!.x + handleBox!.width / 2, handleBox!.y + handleBox!.height / 2);

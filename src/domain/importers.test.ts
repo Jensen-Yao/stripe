@@ -32,4 +32,15 @@ describe("stripe import", () => {
     const result = parseStripeInput("[[0,0],[0,0],[1,1],[0,1]]", "lonlat");
     expect(result).toHaveLength(0);
   });
+
+  it("imports arbitrary concave polygons without reordering vertices", () => {
+    const result = parseStripeInput("[[110,30],[112,30],[112,32],[111,31],[110,32]]", "lonlat");
+    expect(result).toHaveLength(1);
+    expect(result[0].corners).toHaveLength(5);
+    expect(result[0].corners[3]).toMatchObject({ lon: 111, lat: 31 });
+  });
+
+  it("rejects self-intersecting arbitrary polygons", () => {
+    expect(parseStripeInput("[[0,0],[3,3],[0,3],[3,0],[1.5,-1]]", "lonlat")).toHaveLength(0);
+  });
 });

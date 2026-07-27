@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzeStripeOverlaps, analyzeStripePair, scaleStripeAxes, stripeFromParameters, stripeMetrics, transformStripe } from "./geometry";
+import { analyzeStripeOverlaps, analyzeStripePair, geodesicCircle, haversineKm, scaleStripeAxes, stripeFromParameters, stripeMetrics, transformStripe, validateStripePolygon } from "./geometry";
 import type { Stripe } from "./types";
 
 function stripe(id: string, centerLon: number, widthKm = 100): Stripe {
@@ -49,5 +49,29 @@ describe("WGS84 stripe geometry", () => {
   it("indexes one thousand stripes without quadratic comparison", () => {
     const values = Array.from({ length: 1000 }, (_value, index) => stripe(`s-${index}`, -170 + (index % 100) * 3.4, 20));
     expect(analyzeStripeOverlaps(values)).toBeInstanceOf(Array);
+  });
+
+  it("supports concave stripes with arbitrary vertex counts", () => {
+    const corners = [
+      { lon: 110, lat: 30 }, { lon: 112, lat: 30 }, { lon: 112, lat: 32 },
+      { lon: 111, lat: 31 }, { lon: 110, lat: 32 }
+    ];
+    expect(validateStripePolygon(corners).valid).toBe(true);
+    const metrics = stripeMetrics(corners);
+    expect(metrics.vertexCount).toBe(5);
+    expect(metrics.areaKm2).toBeGreaterThan(20_000);
+    expect(validateStripePolygon(scaleStripeAxes(corners, 1.2, 0.8)).valid).toBe(true);
+  });
+
+  it("rejects self-intersecting stripe boundaries", () => {
+    const bowTie = [{ lon: 0, lat: 0 }, { lon: 2, lat: 2 }, { lon: 0, lat: 2 }, { lon: 2, lat: 0 }];
+    expect(validateStripePolygon(bowTie).valid).toBe(false);
+  });
+
+  it("builds a WGS84 target radius boundary", () => {
+    const center = { lon: 116.4, lat: 39.9 };
+    const circle = geodesicCircle(center, 25, 48);
+    expect(circle).toHaveLength(48);
+    circle.forEach((point) => expect(haversineKm(center, point)).toBeCloseTo(25, 6));
   });
 });

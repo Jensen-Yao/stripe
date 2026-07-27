@@ -103,7 +103,7 @@ export type Stripe = {
   name: string;
   visible: boolean;
   color: string;
-  corners: [GeoPoint, GeoPoint, GeoPoint, GeoPoint];
+  corners: GeoPoint[];
   createdAt: string;
   updatedAt: string;
 };
@@ -115,6 +115,7 @@ export type GroundAsset = {
   visible: boolean;
   location: GeoPoint;
   minElevationDeg: number;
+  radiusKm: number;
 };
 
 export type OrbitSample = GeoPoint & {
@@ -181,6 +182,7 @@ export type StripeOverlap = {
 };
 
 export type LayerVisibility = {
+  chinaStandardMap: boolean;
   stripes: boolean;
   satellites: boolean;
   groundTracks: boolean;
@@ -201,7 +203,7 @@ export type Selection = {
 } | null;
 
 export type ProjectSnapshot = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   scenario: Scenario;
   spacecraft: Spacecraft[];
   sensors: Sensor[];

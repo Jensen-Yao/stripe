@@ -78,10 +78,12 @@ const defaultGroundAsset: GroundAsset = {
   kind: "target",
   visible: true,
   location: { lon: 116.4074, lat: 39.9042, heightKm: 0 },
-  minElevationDeg: 10
+  minElevationDeg: 10,
+  radiusKm: 25
 };
 
 const defaultLayerVisibility: LayerVisibility = {
+  chinaStandardMap: true,
   stripes: true,
   satellites: true,
   groundTracks: true,
@@ -287,7 +289,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   snapshot: () => {
     const state = get();
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       scenario: state.scenario,
       spacecraft: state.spacecraft,
       sensors: state.sensors,
@@ -307,13 +309,13 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     scenario: snapshot.scenario,
     spacecraft: snapshot.spacecraft,
     sensors: snapshot.sensors,
-    stripes: snapshot.stripes,
-    groundAssets: snapshot.groundAssets,
+    stripes: (snapshot.stripes ?? []).filter((stripe) => stripe.corners?.length >= 3),
+    groundAssets: (snapshot.groundAssets ?? []).map((asset) => ({ ...asset, radiusKm: Math.max(0, asset.radiusKm ?? 0) })),
     tasks: snapshot.tasks,
     accessWindows: snapshot.accessWindows ?? [],
     coverageResults: snapshot.coverageResults ?? [],
     overlaps: snapshot.overlaps ?? [],
-    layerVisibility: snapshot.layerVisibility,
+    layerVisibility: { ...defaultLayerVisibility, ...snapshot.layerVisibility },
     h3: snapshot.h3,
     baseMapMode: snapshot.baseMapMode ?? "offline",
     projectPath,
