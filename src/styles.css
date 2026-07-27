@@ -91,6 +91,11 @@ button { color: inherit; }
 
 .viewport-panel { grid-column: 2; grid-row: 1; min-width: 0; min-height: 0; position: relative; background: #d9e6e8; overflow: hidden; }
 .map-workbench { position: absolute; inset: 0; }
+.amap-base-layer { position: absolute; inset: 0; z-index: 0; visibility: hidden; pointer-events: none; background: #d9e6e8; }
+.amap-base-layer.active { visibility: visible; }
+.map-workbench > .maplibregl-canvas-container { position: absolute; inset: 0; z-index: 1; }
+.map-workbench > .maplibregl-control-container { position: relative; z-index: 6; }
+.map-workbench.amap-active .maplibregl-ctrl-attrib { display: none; }
 .map-workbench .maplibregl-canvas { outline: none; }
 .maplibregl-ctrl-group { border-radius: 4px; box-shadow: 0 1px 4px rgb(27 47 54 / 22%); }
 .maplibregl-ctrl-group button { width: 30px; height: 30px; }
@@ -120,6 +125,13 @@ button { color: inherit; }
 .field-row > span { color: #5e6d72; }
 .field-row input, .field-row select, .stacked-field textarea, .stacked-field input, .compact-grid input, .import-area, .coordinate-output { min-width: 0; border: 1px solid #bcc7ca; border-radius: 4px; background: #fff; color: #253238; }
 .field-row input, .field-row select { height: 29px; padding: 0 7px; }
+.basemap-field { display: grid; grid-template-columns: 58px minmax(0, 1fr); align-items: center; gap: 8px; font-size: 12px; }
+.basemap-field > span { color: #5e6d72; }
+.basemap-switch { display: grid; grid-template-columns: .8fr .8fr 1.25fr; min-width: 0; border: 1px solid #b9c5c8; border-radius: 4px; overflow: hidden; background: #fff; }
+.inspector-section .basemap-switch button { min-width: 0; min-height: 28px; padding: 0 5px; border: 0; border-right: 1px solid #d0d8da; border-radius: 0; background: #fff; font-size: 11px; white-space: nowrap; }
+.inspector-section .basemap-switch button:last-child { border-right: 0; }
+.inspector-section .basemap-switch button[aria-pressed="true"] { color: #fff !important; background: var(--accent) !important; font-weight: 600; }
+.inspector-section .amap-config-command { display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-size: 11px; }
 .stacked-field { display: grid; gap: 5px; color: #5e6d72; font-size: 12px; }
 .stacked-field textarea { min-height: 51px; padding: 6px; resize: vertical; font-family: Consolas, monospace; font-size: 11px; }
 .stacked-field input { height: 29px; padding: 0 7px; }

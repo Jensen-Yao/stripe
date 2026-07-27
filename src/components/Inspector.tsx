@@ -1,10 +1,10 @@
 import { Fragment, useMemo, useState } from "react";
-import { BarChart3, Clipboard, CopyPlus, Orbit, PlayCircle, Plus, RefreshCw, ScanLine, Settings2, Trash2 } from "lucide-react";
+import { BarChart3, Clipboard, CopyPlus, KeyRound, Orbit, PlayCircle, Plus, RefreshCw, ScanLine, Settings2, Trash2 } from "lucide-react";
 import { coordinatesForOutput, normalizePoint, stripeCenter, stripeMetrics, transformStripe, validateStripePolygon } from "../domain/geometry";
 import { parseStripeInput } from "../domain/importers";
 import { makeId } from "../domain/id";
 import { closestOrbitSample, createSensorFootprint, formatSensorFov, orbitHeadingAtIndex } from "../domain/sensorFov";
-import type { CoordinateOrder, GroundAsset, OrbitSample, OrbitSource, Sensor, Spacecraft, Stripe, TaskPlan, WorkspaceTab } from "../domain/types";
+import type { BaseMapMode, CoordinateOrder, GroundAsset, OrbitSample, OrbitSource, Sensor, Spacecraft, Stripe, TaskPlan, WorkspaceTab } from "../domain/types";
 import { analyzeCoverage, analyzeOverlaps } from "../services/analysisClient";
 import { computeAccess, propagateOrbit } from "../services/orbitClient";
 import { useWorkbenchStore } from "../store/workbenchStore";
@@ -455,9 +455,37 @@ function AnalysisTab() {
       useWorkbenchStore.getState().setStatus(`覆盖分析完成：${value.result.coveragePercent.toFixed(1)}%${value.horizonClipped ? "；视场已裁剪至可见地平线" : ""}`);
     } catch (error) { useWorkbenchStore.getState().setStatus(error instanceof Error ? error.message : String(error)); }
   };
+  const selectBaseMap = (mode: BaseMapMode) => {
+    if (mode === "amap" && useWorkbenchStore.getState().viewMode === "3d") useWorkbenchStore.getState().setViewMode("2d");
+    useWorkbenchStore.getState().setBaseMapMode(mode);
+    useWorkbenchStore.getState().setStatus(mode === "amap" ? "正在连接高德在线地图..." : mode === "osm" ? "已切换到 OSM 在线地图" : "已切换到离线矢量地图");
+  };
+  const configureAmap = async () => {
+    try {
+      const result = await window.stripeApi.chooseAmapConfig();
+      if (result.canceled) return;
+      useWorkbenchStore.getState().setStatus(result.configured ? "高德地图 API 配置已加密保存" : "高德地图 API 配置未保存");
+    } catch (error) {
+      useWorkbenchStore.getState().setStatus(error instanceof Error ? error.message : "高德地图 API 配置失败");
+    }
+  };
   return <div className="inspector-section">
     <h3>图层显示</h3>
-    <label className="field-row"><span>底图</span><select value={baseMapMode} onChange={(event) => useWorkbenchStore.getState().setBaseMapMode(event.target.value as "offline" | "osm")}><option value="offline">离线矢量地图</option><option value="osm">OSM 在线地图</option></select></label>
+    <div className="basemap-field">
+      <span>底图</span>
+      <div className="basemap-switch" role="group" aria-label="底图">
+        {([['offline', '离线'], ['osm', 'OSM'], ['amap', '高德地图']] as const).map(([mode, label]) => <button
+          type="button"
+          key={mode}
+          data-testid={`basemap-${mode}`}
+          className={baseMapMode === mode ? "active" : ""}
+          aria-pressed={baseMapMode === mode}
+          onClick={() => selectBaseMap(mode)}
+        >{label}</button>)}
+      </div>
+    </div>
+    <button className="amap-config-command" type="button" onClick={() => void configureAmap()} title="选择并加密保存高德地图 Web JS API 配置"><KeyRound size={14} />配置高德地图 API</button>
+    {baseMapMode === "amap" && <p className="section-note">高德底图在中国境内按 GCJ-02 显示；规划坐标与计算结果仍保持 WGS84，视图中心自动对齐。</p>}
     <div className="toggle-grid">
       {([['chinaStandardMap','中国标准表达'],['stripes','条带'],['satellites','卫星'],['groundTracks','轨迹'],['coverage','覆盖 / 视场'],['groundAssets','地面对象']] as const).map(([key, label]) => <label key={key}><input type="checkbox" checked={layers[key]} onChange={(event) => useWorkbenchStore.getState().setLayerVisibility({ [key]: event.target.checked })} />{label}</label>)}
     </div>

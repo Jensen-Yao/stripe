@@ -21,6 +21,9 @@ declare global {
       fetchSpaceTrack(query: { noradId?: string; search?: string }): Promise<unknown[]>;
       saveSpaceTrackCredentials(credentials: { username: string; password: string }): Promise<{ saved: boolean }>;
       clearSpaceTrackCredentials(): Promise<{ cleared: boolean }>;
+      getAmapConfig(): Promise<{ configured: boolean; key?: string; securityCode?: string; source?: string }>;
+      chooseAmapConfig(): Promise<{ configured: boolean; canceled?: boolean; source?: string }>;
+      clearAmapConfig(): Promise<{ cleared: boolean }>;
     };
   }
 }

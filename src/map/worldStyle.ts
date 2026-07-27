@@ -77,3 +77,12 @@ export const osmStyle: StyleSpecification = {
     { id: "osm", type: "raster", source: "osm", paint: { "raster-fade-duration": 0 } }
   ]
 };
+
+export const transparentOverlayStyle: StyleSpecification = {
+  version: 8,
+  name: "高德地图透明规划图层",
+  sources: {},
+  layers: [
+    { id: "background", type: "background", paint: { "background-color": "rgba(0, 0, 0, 0)" } }
+  ]
+};

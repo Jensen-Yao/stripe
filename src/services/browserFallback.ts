@@ -13,6 +13,9 @@ export function installBrowserFallback() {
     fetchCelesTrak: async () => [],
     fetchSpaceTrack: async () => [],
     saveSpaceTrackCredentials: async () => ({ saved: false }),
-    clearSpaceTrackCredentials: async () => ({ cleared: true })
+    clearSpaceTrackCredentials: async () => ({ cleared: true }),
+    getAmapConfig: async () => ({ configured: false }),
+    chooseAmapConfig: async () => ({ configured: false, canceled: true }),
+    clearAmapConfig: async () => ({ cleared: true })
   };
 }

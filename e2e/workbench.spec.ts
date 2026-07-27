@@ -50,6 +50,18 @@ test("opens analysis controls and preserves H3 level 13", async ({ page }) => {
   await expect(page.getByTestId("coverage-fov-summary")).toContainText("等待轨道样本");
 });
 
+test("offers AMap and falls back to offline map when desktop API is unavailable", async ({ page }) => {
+  await page.goto("/");
+  await page.getByTestId("tab-analysis").click();
+  const offline = page.getByRole("button", { name: "离线", exact: true });
+  const amap = page.getByRole("button", { name: "高德地图", exact: true });
+  await expect(amap).toBeVisible();
+  await amap.click();
+  await expect(page.getByText(/尚未配置高德地图 Web JS API，已切回离线地图/)).toBeVisible();
+  await expect(offline).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".map-workbench canvas").first()).toBeVisible();
+});
+
 test("keeps level 9 H3 visible by clipping oversized views", async ({ page }) => {
   await page.addInitScript(() => {
     (window as Window & { __h3LongTasks?: number[] }).__h3LongTasks = [];

@@ -2,7 +2,7 @@ export type EntityId = string;
 export type CoordinateOrder = "lonlat" | "latlon";
 export type ToolMode = "select" | "draw-stripe" | "move" | "rotate" | "stretch";
 export type ViewMode = "2d" | "3d";
-export type BaseMapMode = "offline" | "osm";
+export type BaseMapMode = "offline" | "osm" | "amap";
 export type WorkspaceTab = "properties" | "analysis" | "orbit" | "tasks";
 
 export type GeoPoint = {

@@ -60,7 +60,10 @@ export function installWebViewBridge() {
     fetchCelesTrak: (query) => invoke("tle:fetchCelesTrak", query),
     fetchSpaceTrack: (query) => invoke("tle:fetchSpaceTrack", query),
     saveSpaceTrackCredentials: (credentials) => invoke("tle:saveCredentials", credentials),
-    clearSpaceTrackCredentials: () => invoke("tle:clearCredentials")
+    clearSpaceTrackCredentials: () => invoke("tle:clearCredentials"),
+    getAmapConfig: () => invoke("map:getAmapConfig"),
+    chooseAmapConfig: () => invoke("map:chooseAmapConfig"),
+    clearAmapConfig: () => invoke("map:clearAmapConfig")
   };
   return true;
 }

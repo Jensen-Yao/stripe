@@ -4,12 +4,13 @@ import { MapboxOverlay } from "@deck.gl/mapbox";
 import { LineLayer, PathLayer, PolygonLayer, ScatterplotLayer, TextLayer } from "@deck.gl/layers";
 import { H3HexagonLayer } from "@deck.gl/geo-layers";
 import { PMTiles, Protocol } from "pmtiles";
-import type { GeoPoint, OrbitSample, Sensor, Spacecraft, Stripe } from "../domain/types";
+import type { BaseMapMode, GeoPoint, OrbitSample, Sensor, Spacecraft, Stripe } from "../domain/types";
 import { makeId } from "../domain/id";
 import { fromEnu, geodesicCircle, haversineKm, scaleStripeAxes, stripeCenter, stripeFrame, toEnu, transformStripe, validateStripePolygon } from "../domain/geometry";
 import { closestOrbitSample, createSensorFootprint, formatSensorFov, orbitHeadingAtIndex } from "../domain/sensorFov";
 import { useWorkbenchStore } from "../store/workbenchStore";
-import { createWorldStyle, fallbackStyle, osmStyle } from "./worldStyle";
+import { loadAmapSdk, wgs84ToGcj02, type AmapMapInstance } from "./amap";
+import { createWorldStyle, fallbackStyle, osmStyle, transparentOverlayStyle } from "./worldStyle";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 type DragKind = "corner" | "move" | "rotate" | "stretch-length" | "stretch-width";
@@ -44,6 +45,7 @@ const BASE_LABEL_CHARACTERS = Array.from({ length: 95 }, (_, index) => String.fr
 const CHINA_SOURCE_ID = "china-standard-map";
 const CHINA_LAYER_IDS = ["china-standard-fill", "china-standard-provinces", "china-standard-border", "china-standard-maritime"] as const;
 const H3_MINIMUM_DETAIL_ZOOM = [1, 1, 2, 3, 4, 5, 7, 8.5, 11, 12.5, 13.5, 14.5, 15.5, 16] as const;
+const H3_RENDER_WARMUP_CELL = ["8928308280fffff"];
 
 let protocolInstalled = false;
 const pmtilesProtocol = new Protocol();
@@ -136,6 +138,12 @@ function assetUrl(path: string) {
   return window.stripeApi?.assetUrl(path) ?? new URL(`./${path}`, window.location.href).href;
 }
 
+function styleForBaseMap(mode: BaseMapMode, archiveUrl: string) {
+  if (mode === "offline") return createWorldStyle(archiveUrl);
+  if (mode === "amap") return transparentOverlayStyle;
+  return osmStyle;
+}
+
 export function MapWorkbench() {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -147,9 +155,13 @@ export function MapWorkbench() {
     const archiveUrl = assetUrl("maps/world.pmtiles");
     const archive = new PMTiles(archiveUrl);
     pmtilesProtocol.add(archive);
+    const amapContainer = document.createElement("div");
+    amapContainer.className = "amap-base-layer";
+    amapContainer.setAttribute("aria-hidden", "true");
+    container.appendChild(amapContainer);
     const map = new maplibregl.Map({
       container,
-      style: useWorkbenchStore.getState().baseMapMode === "offline" ? createWorldStyle(archiveUrl) : osmStyle,
+      style: styleForBaseMap(useWorkbenchStore.getState().baseMapMode, archiveUrl),
       center: [20, 22],
       zoom: 2,
       minZoom: 1,
@@ -166,6 +178,9 @@ export function MapWorkbench() {
 
     let mapLoadFailed = false;
     let styleReady = false;
+    let amapMap: AmapMapInstance | null = null;
+    let amapActivationId = 0;
+    let amapSyncFrame: number | null = null;
     map.on("error", (event) => {
       const message = event.error?.message ?? "";
       if (!mapLoadFailed && useWorkbenchStore.getState().baseMapMode === "offline" && /pmtiles|world\.pmtiles/i.test(message)) {
@@ -251,6 +266,51 @@ export function MapWorkbench() {
           axisScreen: { x: number; y: number };
         }
       | null = null;
+
+    const scheduleAmapViewSync = () => {
+      if (destroyed || amapSyncFrame !== null || !amapMap || useWorkbenchStore.getState().baseMapMode !== "amap") return;
+      amapSyncFrame = window.requestAnimationFrame(() => {
+        amapSyncFrame = null;
+        if (destroyed || !amapMap || useWorkbenchStore.getState().baseMapMode !== "amap") return;
+        const center = map.getCenter();
+        const gcjCenter = wgs84ToGcj02(normalizeViewLon(center.lng), center.lat);
+        const targetZoom = Math.max(2, Math.min(20, map.getZoom()));
+        amapMap.setZoomAndCenter(targetZoom, gcjCenter, true);
+      });
+    };
+
+    const setAmapActive = async (active: boolean) => {
+      const activationId = ++amapActivationId;
+      container.classList.toggle("amap-active", active);
+      amapContainer.classList.toggle("active", active);
+      if (!active) return;
+      try {
+        const configuration = await window.stripeApi.getAmapConfig();
+        if (destroyed || activationId !== amapActivationId || useWorkbenchStore.getState().baseMapMode !== "amap") return;
+        const sdk = await loadAmapSdk(configuration);
+        if (destroyed || activationId !== amapActivationId || useWorkbenchStore.getState().baseMapMode !== "amap") return;
+        if (!amapMap) {
+          const center = map.getCenter();
+          amapMap = new sdk.Map(amapContainer, {
+            viewMode: "2D",
+            zoom: Math.max(2, Math.min(20, map.getZoom())),
+            center: wgs84ToGcj02(normalizeViewLon(center.lng), center.lat),
+            mapStyle: "amap://styles/normal",
+            showLabel: true,
+            animateEnable: false
+          });
+        }
+        amapMap.resize();
+        scheduleAmapViewSync();
+        useWorkbenchStore.getState().setStatus("高德在线地图已加载；规划坐标保持 WGS84");
+      } catch (error) {
+        if (destroyed || activationId !== amapActivationId || useWorkbenchStore.getState().baseMapMode !== "amap") return;
+        container.classList.remove("amap-active");
+        amapContainer.classList.remove("active");
+        useWorkbenchStore.getState().setBaseMapMode("offline");
+        useWorkbenchStore.getState().setStatus(`${error instanceof Error ? error.message : "高德地图加载失败"}，已切回离线地图`);
+      }
+    };
 
     const refreshCharacterSet = () => {
       const labels = [
@@ -680,6 +740,17 @@ export function MapWorkbench() {
             billboard: true
           }),
           new H3HexagonLayer({
+            id: "h3-render-warmup",
+            data: H3_RENDER_WARMUP_CELL,
+            getHexagon: (cell) => cell,
+            getFillColor: [0, 0, 0, 0],
+            filled: true,
+            stroked: false,
+            highPrecision: "auto",
+            opacity: 0,
+            pickable: false
+          }),
+          new H3HexagonLayer({
             id: "coverage-cells",
             data: state.layerVisibility.coverage ? state.coverageCells : [],
             getHexagon: (cell) => cell,
@@ -1067,7 +1138,7 @@ export function MapWorkbench() {
         h3StreamClipped ||= event.data.clipped;
         h3StreamResolution = useWorkbenchStore.getState().h3.resolution;
         if (event.data.kind === "chunk") {
-          const renderChunkSize = 1_500;
+          const renderChunkSize = 10_000;
           for (let index = 0; index < event.data.cells.length; index += renderChunkSize) {
             h3PendingChunks.push(event.data.cells.slice(index, index + renderChunkSize));
           }
@@ -1198,7 +1269,8 @@ export function MapWorkbench() {
       if (deckLayersChanged) scheduleRender();
       if (state.baseMapMode !== previous.baseMapMode) {
         styleReady = false;
-        map.setStyle(state.baseMapMode === "offline" ? createWorldStyle(archiveUrl) : osmStyle);
+        void setAmapActive(state.baseMapMode === "amap");
+        map.setStyle(styleForBaseMap(state.baseMapMode, archiveUrl));
         applyProjection(state.viewMode);
         map.once("style.load", () => {
           styleReady = true;
@@ -1232,6 +1304,7 @@ export function MapWorkbench() {
     map.on("click", onMapClick);
     map.on("dblclick", onMapDoubleClick);
     map.on("contextmenu", onMapContextMenu);
+    map.on("move", scheduleAmapViewSync);
     window.addEventListener("keydown", onDrawingKeyDown);
     map.on("movestart", () => {
       if (!drag) {
@@ -1255,6 +1328,7 @@ export function MapWorkbench() {
       ensureStripeLayers();
       syncStripeSource();
       render();
+      void setAmapActive(useWorkbenchStore.getState().baseMapMode === "amap");
       if (!ensureH3DetailZoom()) updateH3AfterMapIdle();
     });
     fetch(assetUrl("maps/cities.json"))
@@ -1295,8 +1369,11 @@ export function MapWorkbench() {
       if (frame !== null) window.cancelAnimationFrame(frame);
       if (handleFrame !== null) window.cancelAnimationFrame(handleFrame);
       if (h3ChunkFrame !== null) window.cancelAnimationFrame(h3ChunkFrame);
+      if (amapSyncFrame !== null) window.cancelAnimationFrame(amapSyncFrame);
       h3Worker.terminate();
       window.removeEventListener("keydown", onDrawingKeyDown);
+      amapActivationId += 1;
+      amapMap?.destroy();
       map.remove();
       handleLayer.remove();
       editPreviewSvg.remove();

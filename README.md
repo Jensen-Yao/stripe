@@ -30,7 +30,9 @@ npm run build
 npm run dist:win
 ```
 
-输出路径为 `release/Stripe-Setup-0.3.3-x64.exe`。系统需具备 Microsoft Edge WebView2 Runtime；当前 Windows 10/11 通常已随 Edge 安装。
+输出路径为 `release/Stripe-Setup-0.3.4-x64.exe`。系统需具备 Microsoft Edge WebView2 Runtime；当前 Windows 10/11 通常已随 Edge 安装。
+
+高德在线地图为可选底图。桌面版首次使用时会尝试从 `D:\Desktop\bot\api\高德地图api\web JS api.txt` 导入 Web JS API Key 与安全密钥，并使用 Windows DPAPI 加密保存在当前用户的本机应用数据目录；也可在“分析 > 图层显示”中手动选择配置文件。密钥不会写入项目文件或 Git 仓库。
 
 中国标准地图表达层用于规划显示，覆盖台湾省、钓鱼岛、南海诸岛及相关边界表达，不参与轨道、坐标和面积计算。全球底图来自 Natural Earth，中国行政区划参考几何来自阿里云 DataV 边界服务。
 

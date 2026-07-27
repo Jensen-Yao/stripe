@@ -10,6 +10,7 @@ using System.Net;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows;
 
@@ -22,7 +23,7 @@ namespace Stripe.Host
 
         static DesktopBridge()
         {
-            PublicClient.DefaultRequestHeaders.UserAgent.ParseAdd("Stripe/0.3.3 satellite-planning-workbench");
+            PublicClient.DefaultRequestHeaders.UserAgent.ParseAdd("Stripe/0.3.4 satellite-planning-workbench");
         }
 
         public DesktopBridge(Window owner)
@@ -41,6 +42,9 @@ namespace Stripe.Host
                 case "tle:fetchSpaceTrack": return await FetchSpaceTrackAsync(payload as JObject);
                 case "tle:saveCredentials": return SaveCredentials(payload as JObject);
                 case "tle:clearCredentials": return ClearCredentials();
+                case "map:getAmapConfig": return GetAmapConfig();
+                case "map:chooseAmapConfig": return ChooseAmapConfig();
+                case "map:clearAmapConfig": return ClearAmapConfig();
                 case "science:update": return new JObject { ["updated"] = false, ["coreMode"] = true };
                 default: throw new InvalidOperationException("未知桌面命令：" + command);
             }
@@ -74,7 +78,7 @@ namespace Stripe.Host
                 {
                     ["format"] = "stripe-project",
                     ["schemaVersion"] = payload["snapshot"].Value<int?>("schemaVersion") ?? 1,
-                    ["appVersion"] = "0.3.3",
+                    ["appVersion"] = "0.3.4",
                     ["savedAt"] = DateTime.UtcNow.ToString("O")
                 }.ToString(Formatting.None));
                 WriteEntry(archive, "project.json", payload["snapshot"].ToString(Formatting.None));
@@ -152,7 +156,7 @@ namespace Stripe.Host
             using (var handler = new HttpClientHandler { CookieContainer = cookies, UseCookies = true, AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate })
             using (var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(30) })
             {
-                client.DefaultRequestHeaders.UserAgent.ParseAdd("Stripe/0.3.3 satellite-planning-workbench");
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("Stripe/0.3.4 satellite-planning-workbench");
                 var form = new FormUrlEncodedContent(new Dictionary<string, string>
                 {
                     ["identity"] = credentials.Value<string>("username"),
@@ -221,6 +225,102 @@ namespace Stripe.Host
         private static JToken ClearCredentials()
         {
             if (File.Exists(CredentialsPath)) File.Delete(CredentialsPath);
+            return new JObject { ["cleared"] = true };
+        }
+
+        private static string AmapCredentialsPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Stripe", "amap.credentials");
+
+        private JToken GetAmapConfig()
+        {
+            var stored = ReadAmapCredentials();
+            if (stored != null) return AmapConfigurationResult(stored, "本机加密配置");
+
+            foreach (var path in AmapConfigurationCandidates())
+            {
+                var imported = TryReadAmapConfiguration(path);
+                if (imported == null) continue;
+                SaveAmapCredentials(imported);
+                return AmapConfigurationResult(imported, "已从本机 API 文件自动导入");
+            }
+            return new JObject { ["configured"] = false };
+        }
+
+        private JToken ChooseAmapConfig()
+        {
+            var dialog = new OpenFileDialog
+            {
+                Title = "选择高德地图 Web JS API 配置",
+                Filter = "文本配置 (*.txt)|*.txt|所有文件 (*.*)|*.*",
+                Multiselect = false,
+                CheckFileExists = true
+            };
+            if (dialog.ShowDialog(_owner) != true) return new JObject { ["configured"] = false, ["canceled"] = true };
+            var configuration = TryReadAmapConfiguration(dialog.FileName);
+            if (configuration == null) throw new InvalidDataException("配置文件中未找到有效的高德地图 Key 和安全密钥");
+            SaveAmapCredentials(configuration);
+            return new JObject { ["configured"] = true, ["canceled"] = false, ["source"] = "本机加密配置" };
+        }
+
+        private static IEnumerable<string> AmapConfigurationCandidates()
+        {
+            var fromEnvironment = Environment.GetEnvironmentVariable("STRIPE_AMAP_CONFIG");
+            if (!string.IsNullOrWhiteSpace(fromEnvironment)) yield return fromEnvironment;
+            yield return @"D:\Desktop\bot\api\高德地图api\web JS api.txt";
+            yield return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Desktop", "bot", "api", "高德地图api", "web JS api.txt");
+        }
+
+        private static JObject TryReadAmapConfiguration(string path)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return null;
+                var text = File.ReadAllText(path, Encoding.UTF8);
+                var values = Regex.Matches(text, @"(?<![A-Za-z0-9])[A-Za-z0-9_-]{24,64}(?![A-Za-z0-9])")
+                    .Cast<Match>()
+                    .Select(match => match.Value)
+                    .Distinct(StringComparer.Ordinal)
+                    .Take(2)
+                    .ToArray();
+                if (values.Length < 2) return null;
+                return new JObject { ["key"] = values[0], ["securityCode"] = values[1] };
+            }
+            catch { return null; }
+        }
+
+        private static void SaveAmapCredentials(JObject configuration)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(AmapCredentialsPath));
+            var encrypted = ProtectedData.Protect(Encoding.UTF8.GetBytes(configuration.ToString(Formatting.None)), null, DataProtectionScope.CurrentUser);
+            File.WriteAllBytes(AmapCredentialsPath, encrypted);
+        }
+
+        private static JObject ReadAmapCredentials()
+        {
+            try
+            {
+                var decrypted = ProtectedData.Unprotect(File.ReadAllBytes(AmapCredentialsPath), null, DataProtectionScope.CurrentUser);
+                var configuration = JObject.Parse(Encoding.UTF8.GetString(decrypted));
+                return string.IsNullOrWhiteSpace(configuration.Value<string>("key")) || string.IsNullOrWhiteSpace(configuration.Value<string>("securityCode"))
+                    ? null
+                    : configuration;
+            }
+            catch { return null; }
+        }
+
+        private static JObject AmapConfigurationResult(JObject configuration, string source)
+        {
+            return new JObject
+            {
+                ["configured"] = true,
+                ["key"] = configuration.Value<string>("key"),
+                ["securityCode"] = configuration.Value<string>("securityCode"),
+                ["source"] = source
+            };
+        }
+
+        private static JToken ClearAmapConfig()
+        {
+            if (File.Exists(AmapCredentialsPath)) File.Delete(AmapCredentialsPath);
             return new JObject { ["cleared"] = true };
         }
     }
