@@ -104,6 +104,7 @@ type WorkbenchState = {
   orbitSamples: Record<string, OrbitSample[]>;
   accessWindows: AccessWindow[];
   overlaps: StripeOverlap[];
+  activeOverlapId?: string;
   coverageResults: CoverageResult[];
   coverageCells: string[];
   selection: Selection;
@@ -134,6 +135,7 @@ type WorkbenchState = {
   setOrbitSamples: (spacecraftId: string, samples: OrbitSample[]) => void;
   setAccessWindows: (windows: AccessWindow[]) => void;
   setOverlaps: (overlaps: StripeOverlap[]) => void;
+  setActiveOverlap: (id?: string) => void;
   setCoverageResult: (result: CoverageResult, coveredCells: string[]) => void;
   setSelection: (selection: Selection) => void;
   setToolMode: (mode: ToolMode) => void;
@@ -158,6 +160,7 @@ function withHistory(state: WorkbenchState, nextStripes: Stripe[]) {
     stripes: nextStripes,
     history: { past: [...state.history.past.slice(-49), state.stripes], future: [] },
     overlaps: [],
+    activeOverlapId: undefined,
     coverageResults: [],
     coverageCells: [],
     dirty: true
@@ -174,6 +177,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   orbitSamples: {},
   accessWindows: [],
   overlaps: [],
+  activeOverlapId: undefined,
   coverageResults: [],
   coverageCells: [],
   selection: { kind: "scenario", id: defaultScenario.id },
@@ -249,7 +253,8 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   setTasks: (tasks) => set({ tasks, dirty: true }),
   setOrbitSamples: (spacecraftId, samples) => set((state) => ({ orbitSamples: { ...state.orbitSamples, [spacecraftId]: samples } })),
   setAccessWindows: (accessWindows) => set({ accessWindows }),
-  setOverlaps: (overlaps) => set({ overlaps }),
+  setOverlaps: (overlaps) => set({ overlaps, activeOverlapId: overlaps[0]?.id }),
+  setActiveOverlap: (activeOverlapId) => set({ activeOverlapId }),
   setCoverageResult: (result, coverageCells) => set((state) => ({ coverageResults: [result, ...state.coverageResults].slice(0, 20), coverageCells })),
   setSelection: (selection) => set({ selection }),
   setToolMode: (toolMode) => set({ toolMode }),
@@ -269,6 +274,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       stripes: previous,
       history: { past: state.history.past.slice(0, -1), future: [state.stripes, ...state.history.future].slice(0, 50) },
       overlaps: [],
+      activeOverlapId: undefined,
       coverageResults: [],
       coverageCells: [],
       dirty: true
@@ -281,6 +287,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       stripes: next,
       history: { past: [...state.history.past, state.stripes].slice(-50), future: state.history.future.slice(1) },
       overlaps: [],
+      activeOverlapId: undefined,
       coverageResults: [],
       coverageCells: [],
       dirty: true
@@ -315,6 +322,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     accessWindows: snapshot.accessWindows ?? [],
     coverageResults: snapshot.coverageResults ?? [],
     overlaps: snapshot.overlaps ?? [],
+    activeOverlapId: snapshot.overlaps?.[0]?.id,
     layerVisibility: { ...defaultLayerVisibility, ...snapshot.layerVisibility },
     h3: snapshot.h3,
     baseMapMode: snapshot.baseMapMode ?? "offline",
@@ -338,6 +346,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     orbitSamples: {},
     accessWindows: [],
     overlaps: [],
+    activeOverlapId: undefined,
     coverageResults: [],
     coverageCells: [],
     selection: { kind: "scenario", id: defaultScenario.id },

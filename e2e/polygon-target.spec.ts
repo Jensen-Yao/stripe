@@ -48,3 +48,21 @@ test("exposes the China standard map expression layer", async ({ page }) => {
   await page.waitForTimeout(500);
   await page.screenshot({ path: "test-results/taiwan-standard-label.png" });
 });
+
+test("identifies overlap operands as named A and B stripes", async ({ page }) => {
+  await page.goto("/");
+  await page.getByTestId("tab-analysis").click();
+  await page.getByRole("button", { name: "生成条带" }).click();
+  await page.getByLabel("中心经度").fill("116.2");
+  await page.getByRole("button", { name: "生成条带" }).click();
+  await page.getByRole("button", { name: "运行精确重叠分析" }).click();
+
+  const result = page.getByTestId("overlap-result").first();
+  await expect(result).toBeVisible();
+  await expect(result).toContainText("A");
+  await expect(result).toContainText("条带 1");
+  await expect(result).toContainText("B");
+  await expect(result).toContainText("条带 2");
+  await expect(result).toHaveAttribute("aria-pressed", "true");
+  await page.screenshot({ path: "test-results/overlap-a-b-labels.png" });
+});

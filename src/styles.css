@@ -150,8 +150,19 @@ button { color: inherit; }
 .compact-grid input { height: 28px; padding: 0 6px; }
 .analysis-results, .window-list { display: grid; gap: 5px; }
 .analysis-results button, .window-list button { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; padding: 7px; border: 1px solid #d0d8da; border-radius: 4px; background: #fff; text-align: left; cursor: pointer; }
-.analysis-results button span, .window-list button span { color: #245f72; font-size: 11px; }
+.analysis-results button.active { border-color: #397d96; box-shadow: inset 3px 0 #397d96; background: #f4f9fa; }
+.analysis-results button > span, .window-list button span { color: #245f72; font-size: 11px; }
 .analysis-results button small, .window-list button small { grid-column: 1 / 3; color: #7b898d; font-size: 10px; }
+.overlap-heading { grid-column: 1 / 3; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.overlap-heading strong { color: #25343a; font-size: 12px; }
+.overlap-heading em { color: #245f72; font-size: 11px; font-style: normal; white-space: nowrap; }
+.overlap-entity { grid-column: 1 / 3; min-width: 0; display: grid; grid-template-columns: 20px 8px minmax(0, 1fr) auto; align-items: center; gap: 5px; }
+.overlap-entity > i { width: 8px; height: 8px; border: 1px solid rgb(0 0 0 / 18%); border-radius: 1px; }
+.overlap-entity > span { min-width: 0; overflow: hidden; color: #34444a !important; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.overlap-entity > em { color: #718086; font-size: 10px; font-style: normal; white-space: nowrap; }
+.overlap-role { width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; color: #fff; font-size: 11px; }
+.overlap-role.role-a { background: #1867a4; }
+.overlap-role.role-b { background: #bf531a; }
 .fov-summary { display: grid; gap: 7px; padding: 8px; border: 1px solid #b8d2dc; border-radius: 5px; background: #edf6f8; }
 .fov-summary-title { min-width: 0; display: grid; grid-template-columns: 17px auto minmax(0, 1fr); align-items: center; gap: 5px; color: #285f73; font-size: 11px; }
 .fov-summary-title strong { min-width: 0; overflow: hidden; color: #17495d; text-align: right; text-overflow: ellipsis; white-space: nowrap; }

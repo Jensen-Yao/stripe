@@ -383,7 +383,9 @@ function OrbitTab() {
 
 function AnalysisTab() {
   const stripeCount = useWorkbenchStore((state) => state.stripes.length);
+  const stripes = useWorkbenchStore((state) => state.stripes);
   const overlaps = useWorkbenchStore((state) => state.overlaps);
+  const activeOverlapId = useWorkbenchStore((state) => state.activeOverlapId);
   const layers = useWorkbenchStore((state) => state.layerVisibility);
   const h3 = useWorkbenchStore((state) => state.h3);
   const baseMapMode = useWorkbenchStore((state) => state.baseMapMode);
@@ -396,6 +398,7 @@ function AnalysisTab() {
   const [importText, setImportText] = useState("[[116,40],[117,40],[117,39.5],[116,39.5]]");
   const [order, setOrder] = useState<CoordinateOrder>("lonlat");
   const [parameters, setParameters] = useState({ centerLon: 116, centerLat: 40, lengthKm: 500, widthKm: 50, headingDeg: 0 });
+  const stripesById = useMemo(() => new Map(stripes.map((stripe) => [stripe.id, stripe])), [stripes]);
   const coverageSatellite = spacecraft.find((item) => selection?.kind === "spacecraft" && item.id === selection.id) ?? spacecraft[0];
   const coverageSensor = sensors.find((item) => item.spacecraftId === coverageSatellite?.id);
   const coverageSamples = coverageSatellite ? orbitSamples[coverageSatellite.id] ?? [] : [];
@@ -474,7 +477,25 @@ function AnalysisTab() {
     <button onClick={() => void importStripes()}>导入条带并分析</button>
     <h3>覆盖关系</h3>
     <button className="primary-command" disabled={stripeCount < 2} onClick={() => void runOverlap()}><BarChart3 size={15} />运行精确重叠分析</button>
-    <div className="analysis-results">{overlaps.length ? overlaps.slice(0, 30).map((item) => <button key={item.id} onClick={() => useWorkbenchStore.getState().setSelection({ kind: "stripe", id: item.stripeAId })}><strong>{{ overlap: "部分重叠", a_contains_b: "A 包含 B", b_contains_a: "B 包含 A", same: "完全重合" }[item.relation]}</strong><span>{item.overlapAreaKm2.toFixed(2)} km²</span><small>A {item.overlapPercentOfA.toFixed(1)}% / B {item.overlapPercentOfB.toFixed(1)}%</small></button>) : <p className="empty-state">尚无覆盖分析结果</p>}</div>
+    <div className="analysis-results">{overlaps.length ? overlaps.slice(0, 30).map((item) => {
+      const stripeA = stripesById.get(item.stripeAId);
+      const stripeB = stripesById.get(item.stripeBId);
+      const selectComparison = () => {
+        useWorkbenchStore.getState().setActiveOverlap(item.id);
+        useWorkbenchStore.getState().setStatus(`正在比较 A：${stripeA?.name ?? item.stripeAId}；B：${stripeB?.name ?? item.stripeBId}`);
+      };
+      return <button
+        className={activeOverlapId === item.id ? "active" : ""}
+        data-testid="overlap-result"
+        aria-pressed={activeOverlapId === item.id}
+        key={item.id}
+        onClick={selectComparison}
+      >
+        <span className="overlap-heading"><strong>{{ overlap: "部分重叠", a_contains_b: "A 包含 B", b_contains_a: "B 包含 A", same: "完全重合" }[item.relation]}</strong><em>{item.overlapAreaKm2.toFixed(2)} km²</em></span>
+        <span className="overlap-entity" title={stripeA?.name ?? item.stripeAId}><b className="overlap-role role-a">A</b><i style={{ backgroundColor: stripeA?.color ?? "#2583c4" }} /><span>{stripeA?.name ?? item.stripeAId}</span><em>{item.overlapPercentOfA.toFixed(1)}% 被覆盖</em></span>
+        <span className="overlap-entity" title={stripeB?.name ?? item.stripeBId}><b className="overlap-role role-b">B</b><i style={{ backgroundColor: stripeB?.color ?? "#e4772e" }} /><span>{stripeB?.name ?? item.stripeBId}</span><em>{item.overlapPercentOfB.toFixed(1)}% 被覆盖</em></span>
+      </button>;
+    }) : <p className="empty-state">尚无覆盖分析结果</p>}</div>
     <h3>轨道覆盖统计</h3>
     {coverageSensor && <div className="fov-summary" data-testid="coverage-fov-summary">
       <div className="fov-summary-title"><ScanLine size={15} /><span>传感器视场</span><strong>{coverageSensor.shape === "conical" ? "圆锥" : "矩形"} {formatSensorFov(coverageSensor)}</strong></div>

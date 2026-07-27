@@ -28,6 +28,18 @@ type StripeRenderItem = {
     color: [number, number, number, number];
   }>;
 };
+type OverlapComparisonItem = {
+  role: "A" | "B";
+  stripe: Stripe;
+  polygon: Array<[number, number]>;
+  labelPoint: [number, number];
+  fillColor: [number, number, number, number];
+  lineColor: [number, number, number, number];
+};
+const OVERLAP_ROLE_COLORS = {
+  A: { fill: [37, 131, 196, 42], line: [24, 103, 164, 255] },
+  B: { fill: [228, 119, 46, 42], line: [191, 83, 26, 255] }
+} as const;
 const BASE_LABEL_CHARACTERS = Array.from({ length: 95 }, (_, index) => String.fromCharCode(index + 32));
 const CHINA_SOURCE_ID = "china-standard-map";
 const CHINA_LAYER_IDS = ["china-standard-fill", "china-standard-provinces", "china-standard-border", "china-standard-maritime"] as const;
@@ -89,6 +101,29 @@ function createStripeRenderItem(stripe: Stripe): StripeRenderItem {
       target: polygon[(index + 1) % polygon.length],
       color: lineColor
     }))
+  };
+}
+
+function createOverlapComparisonItem(role: "A" | "B", stripe: Stripe): OverlapComparisonItem {
+  const center = stripeCenter(stripe.corners);
+  const displayCorners = stripe.corners.map((corner) => ({ corner, display: pointArrayNear(corner, center.lon) }));
+  const anchor = displayCorners.reduce((best, candidate) => {
+    if (role === "A") {
+      if (candidate.display[1] !== best.display[1]) return candidate.display[1] > best.display[1] ? candidate : best;
+      return candidate.display[0] < best.display[0] ? candidate : best;
+    }
+    if (candidate.display[1] !== best.display[1]) return candidate.display[1] < best.display[1] ? candidate : best;
+    return candidate.display[0] > best.display[0] ? candidate : best;
+  });
+  const anchorEnu = toEnu(anchor.corner, center);
+  const insetAnchor = fromEnu({ x: anchorEnu.x * 0.82, y: anchorEnu.y * 0.82, z: 0 }, center);
+  return {
+    role,
+    stripe,
+    polygon: displayCorners.map((item) => item.display),
+    labelPoint: pointArrayNear(insetAnchor, center.lon),
+    fillColor: [...OVERLAP_ROLE_COLORS[role].fill],
+    lineColor: [...OVERLAP_ROLE_COLORS[role].line]
   };
 }
 
@@ -213,6 +248,7 @@ export function MapWorkbench() {
         ...cityLabels.map((item) => item.name),
         ...chinaLabels.map((item) => item.name),
         ...groundAssetsRef.map((item) => item.name),
+        ...useWorkbenchStore.getState().stripes.map((item) => item.name),
         "圆锥矩形视场"
       ].join("");
       textCharacterSet = Array.from(new Set([...BASE_LABEL_CHARACTERS, ...labels]));
@@ -338,6 +374,7 @@ export function MapWorkbench() {
       if (state.stripes !== stripeRenderSourceRef) {
         stripeRenderSourceRef = state.stripes;
         stripeRenderCache = state.stripes.filter((stripe) => stripe.visible).map(createStripeRenderItem);
+        refreshCharacterSet();
       }
       const selectedStripeId = state.selection?.kind === "stripe" ? state.selection.id : undefined;
       if (stripeDeckDataSourceRef !== stripeRenderCache || stripeDeckSelectionId !== selectedStripeId) {
@@ -393,6 +430,17 @@ export function MapWorkbench() {
         }));
       }
       const sensorFootprints = footprintCache;
+      const activeOverlap = state.activeOverlapId
+        ? state.overlaps.find((item) => item.id === state.activeOverlapId)
+        : undefined;
+      const overlapComparison = activeOverlap
+        ? ([
+            ["A", state.stripes.find((stripe) => stripe.id === activeOverlap.stripeAId)],
+            ["B", state.stripes.find((stripe) => stripe.id === activeOverlap.stripeBId)]
+          ] as const)
+            .filter((entry): entry is readonly ["A" | "B", Stripe] => Boolean(entry[1]?.visible))
+            .map(([role, stripe]) => createOverlapComparisonItem(role, stripe))
+        : [];
 
       overlay.setProps({
         layers: [
@@ -418,6 +466,65 @@ export function MapWorkbench() {
             getWidth: 1.4,
             widthUnits: "pixels",
             widthMinPixels: 1,
+            pickable: false
+          }),
+          new PolygonLayer({
+            id: "overlap-comparison-polygons",
+            data: state.layerVisibility.stripes ? overlapComparison : [],
+            getPolygon: (item) => item.polygon,
+            getFillColor: (item) => item.fillColor,
+            getLineColor: (item) => item.lineColor,
+            getLineWidth: 3,
+            lineWidthUnits: "pixels",
+            filled: true,
+            stroked: true,
+            pickable: false,
+            wrapLongitude: false
+          }),
+          new ScatterplotLayer({
+            id: "overlap-comparison-markers",
+            data: state.layerVisibility.stripes ? overlapComparison : [],
+            getPosition: (item) => item.labelPoint,
+            getRadius: 14,
+            radiusUnits: "pixels",
+            getFillColor: (item) => item.lineColor,
+            getLineColor: [255, 255, 255, 255],
+            getLineWidth: 2,
+            lineWidthUnits: "pixels",
+            filled: true,
+            stroked: true,
+            pickable: false
+          }),
+          new TextLayer({
+            id: "overlap-comparison-roles",
+            data: state.layerVisibility.stripes ? overlapComparison : [],
+            getPosition: (item) => item.labelPoint,
+            getText: (item) => item.role,
+            getSize: 15,
+            getColor: [255, 255, 255, 255],
+            getTextAnchor: "middle",
+            getAlignmentBaseline: "center",
+            fontFamily: "Microsoft YaHei, sans-serif",
+            characterSet: textCharacterSet,
+            fontWeight: 700,
+            billboard: true,
+            pickable: false
+          }),
+          new TextLayer({
+            id: "overlap-comparison-names",
+            data: state.layerVisibility.stripes ? overlapComparison : [],
+            getPosition: (item) => item.labelPoint,
+            getText: (item) => `${item.role} · ${item.stripe.name}`,
+            getSize: 12,
+            getPixelOffset: [0, 23],
+            getColor: (item) => item.lineColor,
+            getTextAnchor: "middle",
+            fontFamily: "Microsoft YaHei, sans-serif",
+            characterSet: textCharacterSet,
+            fontSettings: { sdf: true, fontSize: 64, buffer: 4, radius: 12 },
+            outlineColor: [255, 255, 255, 245],
+            outlineWidth: 3,
+            billboard: true,
             pickable: false
           }),
           new PolygonLayer({
@@ -856,6 +963,28 @@ export function MapWorkbench() {
       });
     };
 
+    const focusActiveOverlap = () => {
+      const state = useWorkbenchStore.getState();
+      const overlap = state.overlaps.find((item) => item.id === state.activeOverlapId);
+      if (!overlap) return;
+      const stripeA = state.stripes.find((item) => item.id === overlap.stripeAId);
+      const stripeB = state.stripes.find((item) => item.id === overlap.stripeBId);
+      if (!stripeA || !stripeB) return;
+      const referenceLon = stripeCenter(stripeA.corners).lon;
+      const points = [...stripeA.corners, ...stripeB.corners].map((corner) => pointArrayNear(corner, referenceLon));
+      const projected = points.map((point) => map.project(point));
+      const margin = 88;
+      const fullyVisible = projected.every((point) => point.x >= margin
+        && point.x <= container.clientWidth - margin
+        && point.y >= margin
+        && point.y <= container.clientHeight - margin);
+      if (fullyVisible) return;
+      map.fitBounds([
+        [Math.min(...points.map((point) => point[0])), Math.min(...points.map((point) => point[1]))],
+        [Math.max(...points.map((point) => point[0])), Math.max(...points.map((point) => point[1]))]
+      ], { padding: 128, maxZoom: state.viewMode === "3d" ? 3.5 : 8, duration: 260 });
+    };
+
     h3Worker.onmessage = (event) => {
       if (event.data.id !== h3RequestId) return;
       if (event.data.ok) {
@@ -975,6 +1104,8 @@ export function MapWorkbench() {
         || state.selection !== previous.selection
         || state.groundAssets !== previous.groundAssets
         || state.coverageCells !== previous.coverageCells
+        || state.overlaps !== previous.overlaps
+        || state.activeOverlapId !== previous.activeOverlapId
         || state.layerVisibility !== previous.layerVisibility
         || state.baseMapMode !== previous.baseMapMode
         || state.viewMode !== previous.viewMode;
@@ -1010,6 +1141,7 @@ export function MapWorkbench() {
         map.doubleClickZoom.disable();
       }
       if (state.selection !== previous.selection || state.stripes.length > previous.stripes.length) focusSelectionWhenOutside();
+      if (state.activeOverlapId !== previous.activeOverlapId) focusActiveOverlap();
     });
     map.on("click", onMapClick);
     map.on("dblclick", onMapDoubleClick);
