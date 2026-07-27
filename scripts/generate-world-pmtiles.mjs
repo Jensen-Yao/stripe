@@ -69,6 +69,15 @@ function geometryOnly(data) {
   };
 }
 
+function isTaiwanCountryFeature(feature) {
+  const properties = feature.properties ?? {};
+  const codes = [properties.ADM0_A3, properties.SOV_A3, properties.ISO_A3, properties.GU_A3]
+    .map((value) => String(value ?? "").toUpperCase());
+  const names = [properties.NAME_ZH, properties.NAME, properties.ADMIN, properties.SOVEREIGNT]
+    .map((value) => String(value ?? ""));
+  return codes.includes("TWN") || names.some((name) => /中华民国|台湾|臺灣|Taiwan|Republic of China/i.test(name));
+}
+
 async function buildMbtiles(datasets) {
   const SQL = await initSqlJs({ locateFile: (file) => path.join(root, "node_modules", "sql.js", "dist", file) });
   const db = new SQL.Database();
@@ -185,13 +194,14 @@ async function main() {
     .slice(0, 1200);
   await fs.writeFile(path.join(outputDir, "cities.json"), JSON.stringify(cities), "utf8");
   const countryLabels = datasets.countries.features
+    .filter((feature) => !isTaiwanCountryFeature(feature))
     .map((feature) => ({
       lon: Number(feature.properties?.LABEL_X),
       lat: Number(feature.properties?.LABEL_Y),
       name: feature.properties?.NAME_ZH || feature.properties?.NAME || feature.properties?.ADMIN || "",
       rank: Number(feature.properties?.LABELRANK ?? 9)
     }))
-    .filter((label) => Number.isFinite(label.lon) && Number.isFinite(label.lat) && label.name && !/^(台湾|Taiwan)$/i.test(label.name))
+    .filter((label) => Number.isFinite(label.lon) && Number.isFinite(label.lat) && label.name)
     .sort((a, b) => a.rank - b.rank);
   await fs.writeFile(path.join(outputDir, "country-labels.json"), JSON.stringify(countryLabels), "utf8");
   await fs.writeFile(path.join(outputDir, "china-standard-labels.json"), JSON.stringify(chinaStandard.labels), "utf8");

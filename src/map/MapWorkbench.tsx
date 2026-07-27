@@ -1049,7 +1049,9 @@ export function MapWorkbench() {
     fetch(assetUrl("maps/country-labels.json"))
       .then((response) => response.ok ? response.json() : [])
       .then((countries) => {
-        countryLabels = Array.isArray(countries) ? countries : [];
+        countryLabels = Array.isArray(countries)
+          ? countries.filter((country) => !/中华民国|台湾|臺灣|Taiwan|Republic of China/i.test(String(country?.name ?? "")))
+          : [];
         refreshCharacterSet();
         scheduleRender();
       })

@@ -34,4 +34,17 @@ test("exposes the China standard map expression layer", async ({ page }) => {
   await expect(standardLayer).toBeVisible();
   await expect(standardLayer.locator("input")).toBeChecked();
   await expect(page.getByText(/台湾省、钓鱼岛、南海诸岛/)).toBeVisible();
+  const countryLabels = await page.request.get("/maps/country-labels.json");
+  expect(countryLabels.ok()).toBe(true);
+  const labels = await countryLabels.json() as Array<{ name?: string }>;
+  expect(labels.some((label) => /中华民国|台湾|臺灣|Taiwan|Republic of China/i.test(label.name ?? ""))).toBe(false);
+  await page.getByLabel("中心经度").fill("121");
+  await page.getByLabel("中心纬度").fill("23.7");
+  await page.getByLabel("长度 km").fill("50");
+  await page.getByLabel("宽度 km").fill("10");
+  await page.getByRole("button", { name: "生成条带" }).click();
+  await expect(page.locator(".handle-rotate")).toBeVisible();
+  await page.keyboard.press("Delete");
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: "test-results/taiwan-standard-label.png" });
 });
