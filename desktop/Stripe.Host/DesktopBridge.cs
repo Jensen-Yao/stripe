@@ -23,7 +23,7 @@ namespace Stripe.Host
 
         static DesktopBridge()
         {
-            PublicClient.DefaultRequestHeaders.UserAgent.ParseAdd("Stripe/0.3.4 satellite-planning-workbench");
+            PublicClient.DefaultRequestHeaders.UserAgent.ParseAdd("Stripe/0.3.5 satellite-planning-workbench");
         }
 
         public DesktopBridge(Window owner)
@@ -78,7 +78,7 @@ namespace Stripe.Host
                 {
                     ["format"] = "stripe-project",
                     ["schemaVersion"] = payload["snapshot"].Value<int?>("schemaVersion") ?? 1,
-                    ["appVersion"] = "0.3.4",
+                    ["appVersion"] = "0.3.5",
                     ["savedAt"] = DateTime.UtcNow.ToString("O")
                 }.ToString(Formatting.None));
                 WriteEntry(archive, "project.json", payload["snapshot"].ToString(Formatting.None));
@@ -156,7 +156,7 @@ namespace Stripe.Host
             using (var handler = new HttpClientHandler { CookieContainer = cookies, UseCookies = true, AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate })
             using (var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(30) })
             {
-                client.DefaultRequestHeaders.UserAgent.ParseAdd("Stripe/0.3.4 satellite-planning-workbench");
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("Stripe/0.3.5 satellite-planning-workbench");
                 var form = new FormUrlEncodedContent(new Dictionary<string, string>
                 {
                     ["identity"] = credentials.Value<string>("username"),

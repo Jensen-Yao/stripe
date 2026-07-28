@@ -182,6 +182,7 @@ export type StripeOverlap = {
 };
 
 export type LayerVisibility = {
+  geographicContext: boolean;
   chinaStandardMap: boolean;
   stripes: boolean;
   satellites: boolean;

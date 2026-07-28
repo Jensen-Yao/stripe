@@ -8,7 +8,7 @@
     <Prefer32Bit>false</Prefer32Bit>
     <AssemblyName>Stripe</AssemblyName>
     <RootNamespace>Stripe.Host</RootNamespace>
-    <Version>0.3.4</Version>
+    <Version>0.3.5</Version>
     <ApplicationIcon>..\..\earth.ico</ApplicationIcon>
     <Deterministic>true</Deterministic>
   </PropertyGroup>

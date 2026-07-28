@@ -125,7 +125,7 @@ namespace Stripe.Host
         private void About_Click(object sender, RoutedEventArgs e)
         {
             MessageBox.Show(this,
-                "卫星条带规划工具 0.3.4\n\n轻量核心：MapLibre、PMTiles、deck.gl、H3、SGP4\n支持任意多节点条带、中国标准地图表达、高德在线底图和目标区域访问分析。\n\n本工具用于研究与工程规划，不用于飞控或任务安全认证。",
+                "卫星条带规划工具 0.3.5\n\n轻量核心：MapLibre、PMTiles、deck.gl、H3、SGP4\n支持任意多节点条带、中国标准地图表达、高德二维与球面底图、目标区域访问分析。\n\n本工具用于研究与工程规划，不用于飞控或任务安全认证。",
                 "关于", MessageBoxButton.OK, MessageBoxImage.Information);
         }
     }

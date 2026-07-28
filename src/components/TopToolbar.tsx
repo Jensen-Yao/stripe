@@ -43,7 +43,7 @@ export function TopToolbar() {
     <header className="top-toolbar">
       <div className="brand-block">
         <strong>Stripe</strong>
-        <span>卫星规划工作台 0.3.4</span>
+        <span>卫星规划工作台 0.3.5</span>
       </div>
       <div className="toolbar-group">
         <IconButton title="新建项目" onClick={() => { if (!store.getState().dirty || window.confirm("当前项目有未保存修改，仍要新建项目吗？")) store.getState().resetProject(); }}><FilePlus2 size={17} /></IconButton>
