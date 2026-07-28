@@ -1,6 +1,6 @@
 {
   "name": "stripe",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "private": true,
   "description": "轻量、快速的 Windows 卫星规划、轨道分析与条带设计工作台。",
   "scripts": {
@@ -11,6 +11,7 @@
     "build": "npm run build:web && npm run build:host",
     "build:web": "node scripts/clean-build.mjs && tsc -p tsconfig.json && vite build",
     "build:host": "dotnet build desktop/Stripe.Host/Stripe.Host.csproj -c Release",
+    "generate:amap-overview": "node scripts/generate-amap-globe-overview.mjs",
     "generate:map": "node scripts/generate-world-pmtiles.mjs",
     "test": "vitest run",
     "test:watch": "vitest",

@@ -62,6 +62,115 @@ test("offers AMap and falls back to offline map when desktop API is unavailable"
   await expect(page.locator(".map-workbench canvas").first()).toBeVisible();
 });
 
+test("switches AMap between SDK 2D and a globe basemap", async ({ page }) => {
+  await page.route("**/appmaptile**", (route) => route.abort());
+  await page.goto("/");
+  await page.waitForFunction(() => Boolean(window.stripeApi));
+  await page.evaluate(() => {
+    class FakeAmapMap {
+      private readonly container: HTMLElement;
+
+      constructor(container: HTMLElement, options: Record<string, unknown>) {
+        this.container = container;
+        this.container.dataset.amapViewMode = String(options.viewMode);
+        const surface = document.createElement("div");
+        surface.className = "amap-maps";
+        this.container.appendChild(surface);
+      }
+
+      setZoomAndCenter() {}
+      resize() {}
+      destroy() { this.container.replaceChildren(); }
+    }
+
+    window.stripeApi.getAmapConfig = async () => ({ configured: true, key: "test-key", securityCode: "test-security" });
+    (window as unknown as { AMap: { Map: typeof FakeAmapMap } }).AMap = { Map: FakeAmapMap };
+  });
+  await page.getByTestId("tab-analysis").click();
+  await page.getByTestId("basemap-amap").click();
+  await expect(page.getByText("中国表达（高德内置）")).toBeVisible();
+  await expect(page.getByText("中国表达（高德内置）").locator("input")).toBeDisabled();
+  await expect(page.locator(".amap-base-layer")).toHaveAttribute("data-amap-view-mode", "2D");
+  await page.getByRole("button", { name: "三维" }).click();
+  await expect(page.getByText("高德球面检查视图：条带编辑已锁定")).toBeVisible();
+  await expect(page.getByTestId("basemap-amap")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".map-workbench")).toHaveClass(/amap-globe/);
+  await expect(page.locator(".map-workbench")).toHaveAttribute("data-map-projection", "globe");
+  await expect.poll(async () => Number(await page.locator(".map-workbench").getAttribute("data-map-zoom"))).toBeGreaterThan(1.8);
+  expect(Number(await page.locator(".map-workbench").getAttribute("data-map-zoom"))).toBeLessThan(2.2);
+  await expect(page.locator(".amap-base-layer")).not.toHaveClass(/active/);
+  await page.getByRole("button", { name: "二维" }).click();
+  await expect(page.locator(".map-workbench")).not.toHaveClass(/amap-globe/);
+  await expect(page.locator(".map-workbench")).toHaveAttribute("data-map-projection", "mercator");
+  await expect(page.locator(".amap-base-layer")).toHaveClass(/active/);
+});
+
+test("shows geographic context on AMap and keeps offline and OSM globe views complete", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.route("https://tile.openstreetmap.org/**", (route) => route.abort());
+  await page.route("**/appmaptile**", (route) => route.abort());
+  await page.goto("/");
+  await page.waitForFunction(() => Boolean(window.stripeApi));
+  await page.evaluate(() => {
+    class FakeAmapMap {
+      private readonly container: HTMLElement;
+      constructor(container: HTMLElement) {
+        this.container = container;
+        const surface = document.createElement("div");
+        surface.className = "amap-maps";
+        this.container.appendChild(surface);
+      }
+      setZoomAndCenter() {}
+      resize() {}
+      destroy() { this.container.replaceChildren(); }
+    }
+    window.stripeApi.getAmapConfig = async () => ({ configured: true, key: "test-key", securityCode: "test-security" });
+    (window as unknown as { AMap: { Map: typeof FakeAmapMap } }).AMap = { Map: FakeAmapMap };
+  });
+  await page.getByTestId("tab-analysis").click();
+  const geographicContext = page.getByText("地理脉络", { exact: true }).locator("input");
+  await expect(geographicContext).toBeChecked();
+  await expect(page.locator(".map-workbench")).toHaveAttribute("data-geographic-context", "visible");
+  await geographicContext.uncheck();
+  await expect(page.locator(".map-workbench")).toHaveAttribute("data-geographic-context", "hidden");
+  await geographicContext.check();
+  await page.getByTestId("basemap-amap").click();
+  await expect(page.locator(".amap-base-layer")).toHaveClass(/active/);
+  await expect(page.locator(".map-workbench")).toHaveAttribute("data-geographic-context", "visible");
+  await page.getByRole("button", { name: "三维" }).click();
+  await expect(page.locator(".map-workbench")).toHaveAttribute("data-map-projection", "globe");
+  await page.getByTestId("basemap-offline").click();
+  await expect(page.getByTestId("basemap-offline")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".map-workbench")).toHaveAttribute("data-map-projection", "globe");
+  await page.getByTestId("basemap-osm").click();
+  await expect(page.getByTestId("basemap-osm")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".map-workbench")).toHaveAttribute("data-map-projection", "globe");
+  await page.getByRole("button", { name: "二维" }).click();
+  await expect(page.locator(".map-workbench")).toHaveAttribute("data-map-projection", "mercator");
+  expect(pageErrors).toEqual([]);
+});
+
+test("coalesces rapid base-map changes without freezing the workbench", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.route("https://tile.openstreetmap.org/**", (route) => route.abort());
+  await page.goto("/");
+  await page.getByTestId("tab-analysis").click();
+  await page.evaluate(() => {
+    for (const testId of ["basemap-osm", "basemap-offline", "basemap-osm", "basemap-offline", "basemap-osm"]) {
+      document.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`)?.click();
+    }
+    document.querySelector<HTMLButtonElement>(".view-switch button:nth-child(2)")?.click();
+    document.querySelector<HTMLButtonElement>("[data-testid=basemap-offline]")?.click();
+  });
+  await expect(page.getByTestId("basemap-offline")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".map-workbench")).toHaveAttribute("data-map-projection", "globe");
+  await page.getByRole("button", { name: "二维" }).click();
+  await expect(page.locator(".map-workbench")).toHaveAttribute("data-map-projection", "mercator");
+  expect(pageErrors).toEqual([]);
+});
+
 test("keeps level 9 H3 visible by clipping oversized views", async ({ page }) => {
   await page.addInitScript(() => {
     (window as Window & { __h3LongTasks?: number[] }).__h3LongTasks = [];

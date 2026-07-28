@@ -10,7 +10,7 @@ import { fromEnu, geodesicCircle, haversineKm, scaleStripeAxes, stripeCenter, st
 import { closestOrbitSample, createSensorFootprint, formatSensorFov, orbitHeadingAtIndex } from "../domain/sensorFov";
 import { useWorkbenchStore } from "../store/workbenchStore";
 import { loadAmapSdk, wgs84ToGcj02, type AmapMapInstance } from "./amap";
-import { createWorldStyle, fallbackStyle, osmStyle, transparentOverlayStyle } from "./worldStyle";
+import { createAmapGlobeStyle, createOsmStyle, createWorldStyle, fallbackStyle, transparentOverlayStyle } from "./worldStyle";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 type DragKind = "corner" | "move" | "rotate" | "stretch-length" | "stretch-width";
@@ -44,6 +44,9 @@ const OVERLAP_ROLE_COLORS = {
 const BASE_LABEL_CHARACTERS = Array.from({ length: 95 }, (_, index) => String.fromCharCode(index + 32));
 const CHINA_SOURCE_ID = "china-standard-map";
 const CHINA_LAYER_IDS = ["china-standard-fill", "china-standard-provinces", "china-standard-border", "china-standard-maritime"] as const;
+const GEOGRAPHIC_CONTEXT_SOURCE_ID = "geographic-context";
+const GEOGRAPHIC_CONTEXT_LAYER_IDS = ["geographic-context-countries-fill", "geographic-context-countries-line", "geographic-context-states-line", "geographic-context-lakes-fill", "geographic-context-rivers-line"] as const;
+const OFFLINE_CONTEXT_LAYER_IDS = ["countries-fill", "countries-line", "states-line", "lakes-fill", "rivers-line"] as const;
 const H3_MINIMUM_DETAIL_ZOOM = [1, 1, 2, 3, 4, 5, 7, 8.5, 11, 12.5, 13.5, 14.5, 15.5, 16] as const;
 const H3_RENDER_WARMUP_CELL = ["8928308280fffff"];
 
@@ -138,10 +141,11 @@ function assetUrl(path: string) {
   return window.stripeApi?.assetUrl(path) ?? new URL(`./${path}`, window.location.href).href;
 }
 
-function styleForBaseMap(mode: BaseMapMode, archiveUrl: string) {
-  if (mode === "offline") return createWorldStyle(archiveUrl);
-  if (mode === "amap") return transparentOverlayStyle;
-  return osmStyle;
+function styleForBaseMap(mode: BaseMapMode, archiveUrl: string, amapOverviewUrl: string, viewMode: "2d" | "3d") {
+  const projection = viewMode === "3d" ? "globe" : "mercator";
+  if (mode === "offline") return createWorldStyle(archiveUrl, projection);
+  if (mode === "amap") return viewMode === "3d" ? createAmapGlobeStyle(amapOverviewUrl, archiveUrl) : transparentOverlayStyle;
+  return createOsmStyle(archiveUrl, projection);
 }
 
 export function MapWorkbench() {
@@ -153,15 +157,17 @@ export function MapWorkbench() {
     installPmtilesProtocol();
 
     const archiveUrl = assetUrl("maps/world.pmtiles");
+    const amapOverviewUrl = assetUrl("maps/amap-overview/");
     const archive = new PMTiles(archiveUrl);
     pmtilesProtocol.add(archive);
     const amapContainer = document.createElement("div");
     amapContainer.className = "amap-base-layer";
     amapContainer.setAttribute("aria-hidden", "true");
     container.appendChild(amapContainer);
+    const initialState = useWorkbenchStore.getState();
     const map = new maplibregl.Map({
       container,
-      style: styleForBaseMap(useWorkbenchStore.getState().baseMapMode, archiveUrl),
+      style: styleForBaseMap(initialState.baseMapMode, archiveUrl, amapOverviewUrl, initialState.viewMode),
       center: [20, 22],
       zoom: 2,
       minZoom: 1,
@@ -176,11 +182,19 @@ export function MapWorkbench() {
     map.addControl(new maplibregl.NavigationControl({ showCompass: false, visualizePitch: false }), "bottom-right");
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-left");
 
+    const updateViewDiagnostics = () => {
+      container.dataset.mapProjection = String(map.getProjection().type ?? "");
+      container.dataset.mapZoom = map.getZoom().toFixed(2);
+    };
+    map.on("moveend", updateViewDiagnostics);
+    map.on("style.load", updateViewDiagnostics);
+
     let mapLoadFailed = false;
     let styleReady = false;
     let amapMap: AmapMapInstance | null = null;
     let amapActivationId = 0;
     let amapSyncFrame: number | null = null;
+    let planarCamera: { center: [number, number]; zoom: number; bearing: number; pitch: number } | null = null;
     map.on("error", (event) => {
       const message = event.error?.message ?? "";
       if (!mapLoadFailed && useWorkbenchStore.getState().baseMapMode === "offline" && /pmtiles|world\.pmtiles/i.test(message)) {
@@ -268,10 +282,10 @@ export function MapWorkbench() {
       | null = null;
 
     const scheduleAmapViewSync = () => {
-      if (destroyed || amapSyncFrame !== null || !amapMap || useWorkbenchStore.getState().baseMapMode !== "amap") return;
+      if (destroyed || amapSyncFrame !== null || !amapMap || useWorkbenchStore.getState().baseMapMode !== "amap" || useWorkbenchStore.getState().viewMode !== "2d") return;
       amapSyncFrame = window.requestAnimationFrame(() => {
         amapSyncFrame = null;
-        if (destroyed || !amapMap || useWorkbenchStore.getState().baseMapMode !== "amap") return;
+        if (destroyed || !amapMap || useWorkbenchStore.getState().baseMapMode !== "amap" || useWorkbenchStore.getState().viewMode !== "2d") return;
         const center = map.getCenter();
         const gcjCenter = wgs84ToGcj02(normalizeViewLon(center.lng), center.lat);
         const targetZoom = Math.max(2, Math.min(20, map.getZoom()));
@@ -324,10 +338,69 @@ export function MapWorkbench() {
       textCharacterSet = Array.from(new Set([...BASE_LABEL_CHARACTERS, ...labels]));
     };
 
-    const applyProjection = (viewMode: "2d" | "3d") => {
-      const update = () => map.setProjection({ type: viewMode === "3d" ? "globe" : "mercator" });
-      if (map.isStyleLoaded()) update();
-      else map.once("style.load", update);
+    const applyProjection = (viewMode: "2d" | "3d", resetCamera = false) => {
+      const update = () => {
+        if (destroyed || useWorkbenchStore.getState().viewMode !== viewMode) return;
+        map.setProjection({ type: viewMode === "3d" ? "globe" : "mercator" });
+        map.setMinZoom(viewMode === "3d" ? 0 : 1);
+        const applyCamera = () => {
+          if (destroyed || useWorkbenchStore.getState().viewMode !== viewMode) return;
+          if (resetCamera && viewMode === "3d") {
+            map.jumpTo({ zoom: 2, pitch: 0, bearing: 0 });
+          } else if (resetCamera && viewMode === "2d" && planarCamera) {
+            map.jumpTo(planarCamera);
+            planarCamera = null;
+          } else {
+            map.jumpTo({ pitch: 0, bearing: 0 });
+          }
+          updateViewDiagnostics();
+        };
+        applyCamera();
+        if (resetCamera) map.once("idle", applyCamera);
+      };
+      update();
+    };
+
+    const ensureGeographicContextLayers = () => {
+      if (!styleReady) return;
+      const state = useWorkbenchStore.getState();
+      const visibility = state.layerVisibility.geographicContext ? "visible" : "none";
+      container.dataset.geographicContext = state.layerVisibility.geographicContext ? "visible" : "hidden";
+      const worldSource = map.getSource("world");
+      if (worldSource) {
+        OFFLINE_CONTEXT_LAYER_IDS.forEach((id) => {
+          if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", visibility);
+        });
+        return;
+      }
+      if (!map.getSource(GEOGRAPHIC_CONTEXT_SOURCE_ID)) {
+        map.addSource(GEOGRAPHIC_CONTEXT_SOURCE_ID, {
+          type: "vector",
+          url: `pmtiles://${archiveUrl}`,
+          attribution: "Natural Earth / 阿里云 DataV / PMTiles"
+        });
+      }
+      if (!map.getLayer("geographic-context-countries-fill")) map.addLayer({
+        id: "geographic-context-countries-fill", type: "fill", source: GEOGRAPHIC_CONTEXT_SOURCE_ID, "source-layer": "countries",
+        paint: { "fill-color": "#c7dfd4", "fill-opacity": 0.24 }
+      });
+      if (!map.getLayer("geographic-context-countries-line")) map.addLayer({
+        id: "geographic-context-countries-line", type: "line", source: GEOGRAPHIC_CONTEXT_SOURCE_ID, "source-layer": "countries",
+        paint: { "line-color": "#377b70", "line-opacity": 0.78, "line-width": ["interpolate", ["linear"], ["zoom"], 0, 0.55, 8, 1.2] }
+      });
+      if (!map.getLayer("geographic-context-states-line")) map.addLayer({
+        id: "geographic-context-states-line", type: "line", source: GEOGRAPHIC_CONTEXT_SOURCE_ID, "source-layer": "states", minzoom: 3,
+        paint: { "line-color": "#6f9e99", "line-opacity": 0.72, "line-width": ["interpolate", ["linear"], ["zoom"], 3, 0.35, 8, 0.9] }
+      });
+      if (!map.getLayer("geographic-context-lakes-fill")) map.addLayer({
+        id: "geographic-context-lakes-fill", type: "fill", source: GEOGRAPHIC_CONTEXT_SOURCE_ID, "source-layer": "lakes",
+        paint: { "fill-color": "#76b8d1", "fill-opacity": 0.82 }
+      });
+      if (!map.getLayer("geographic-context-rivers-line")) map.addLayer({
+        id: "geographic-context-rivers-line", type: "line", source: GEOGRAPHIC_CONTEXT_SOURCE_ID, "source-layer": "rivers",
+        paint: { "line-color": "#57a5c3", "line-opacity": 0.8, "line-width": ["interpolate", ["linear"], ["zoom"], 2, 0.35, 8, 1.1] }
+      });
+      GEOGRAPHIC_CONTEXT_LAYER_IDS.forEach((id) => map.setLayoutProperty(id, "visibility", visibility));
     };
 
     const ensureChinaStandardLayers = () => {
@@ -356,12 +429,14 @@ export function MapWorkbench() {
         id: "china-standard-maritime", type: "line", source: sourceId, "source-layer": "china_maritime",
         paint: { "line-color": "#9f2f26", "line-width": ["interpolate", ["linear"], ["zoom"], 2, 1.2, 8, 2], "line-dasharray": [3, 2] }
       });
-      const visibility = useWorkbenchStore.getState().layerVisibility.chinaStandardMap ? "visible" : "none";
+      const state = useWorkbenchStore.getState();
+      const visibility = state.layerVisibility.chinaStandardMap && state.baseMapMode !== "amap" ? "visible" : "none";
       CHINA_LAYER_IDS.forEach((id) => map.setLayoutProperty(id, "visibility", visibility));
     };
 
     const ensureStripeLayers = () => {
       if (!styleReady) return;
+      ensureGeographicContextLayers();
       ensureChinaStandardLayers();
     };
 
@@ -684,7 +759,7 @@ export function MapWorkbench() {
           }),
           new TextLayer({
             id: "china-standard-labels",
-            data: state.layerVisibility.chinaStandardMap ? chinaLabels.filter((item) => map.getZoom() >= item.minZoom) : [],
+            data: state.layerVisibility.chinaStandardMap && state.baseMapMode !== "amap" ? chinaLabels.filter((item) => map.getZoom() >= item.minZoom) : [],
             getPosition: (item) => [item.lon, item.lat],
             getText: (item) => item.name,
             getSize: (item) => item.kind === "focus" ? 12 : 11,
@@ -1088,7 +1163,7 @@ export function MapWorkbench() {
           map.fitBounds([
             [Math.min(...longitudes), Math.min(...latitudes)],
             [Math.max(...longitudes), Math.max(...latitudes)]
-          ], { padding: 128, maxZoom: state.viewMode === "3d" ? 3.5 : 8, duration: 240 });
+          ], { padding: 128, maxZoom: state.viewMode === "3d" && state.baseMapMode !== "amap" ? 3.5 : 8, duration: 240 });
           return;
         }
       } else if (state.selection?.kind === "groundAsset") {
@@ -1104,7 +1179,7 @@ export function MapWorkbench() {
       if (projected.x >= margin && projected.x <= container.clientWidth - margin && projected.y >= margin && projected.y <= container.clientHeight - margin) return;
       map.easeTo({
         center: display,
-        zoom: state.viewMode === "3d" ? Math.min(3.5, Math.max(2, map.getZoom())) : Math.max(4, map.getZoom()),
+        zoom: state.viewMode === "3d" && state.baseMapMode !== "amap" ? Math.min(3.5, Math.max(2, map.getZoom())) : Math.max(4, map.getZoom()),
         duration: 280
       });
     };
@@ -1128,7 +1203,7 @@ export function MapWorkbench() {
       map.fitBounds([
         [Math.min(...points.map((point) => point[0])), Math.min(...points.map((point) => point[1]))],
         [Math.max(...points.map((point) => point[0])), Math.max(...points.map((point) => point[1]))]
-      ], { padding: 128, maxZoom: state.viewMode === "3d" ? 3.5 : 8, duration: 260 });
+      ], { padding: 128, maxZoom: state.viewMode === "3d" && state.baseMapMode !== "amap" ? 3.5 : 8, duration: 260 });
     };
 
     h3Worker.onmessage = (event) => {
@@ -1235,6 +1310,54 @@ export function MapWorkbench() {
       }
     };
 
+    type StyleRequest = { baseMapMode: BaseMapMode; viewMode: "2d" | "3d"; resetCamera: boolean };
+    let styleRequestFrame: number | null = null;
+    let styleTransitionActive = false;
+    let styleTransitionTimeout: number | null = null;
+    let pendingStyleRequest: StyleRequest | null = null;
+    const scheduleNextStyleRequest = () => {
+      if (destroyed || styleTransitionActive || styleRequestFrame !== null || !pendingStyleRequest) return;
+      styleRequestFrame = window.requestAnimationFrame(() => {
+        styleRequestFrame = null;
+        if (destroyed || styleTransitionActive || !pendingStyleRequest) return;
+        const request = pendingStyleRequest;
+        pendingStyleRequest = null;
+        styleTransitionActive = true;
+        styleReady = false;
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          if (styleTransitionTimeout !== null) {
+            window.clearTimeout(styleTransitionTimeout);
+            styleTransitionTimeout = null;
+          }
+          styleTransitionActive = false;
+          const current = useWorkbenchStore.getState();
+          if (current.baseMapMode === request.baseMapMode && current.viewMode === request.viewMode) {
+            styleReady = true;
+            applyProjection(request.viewMode, request.resetCamera);
+            ensureStripeLayers();
+            syncStripeSource();
+          }
+          scheduleNextStyleRequest();
+        };
+        map.once("style.load", finish);
+        styleTransitionTimeout = window.setTimeout(finish, 12000);
+        try {
+          map.setStyle(styleForBaseMap(request.baseMapMode, archiveUrl, amapOverviewUrl, request.viewMode));
+          applyProjection(request.viewMode, request.resetCamera);
+        } catch (error) {
+          finish();
+          useWorkbenchStore.getState().setStatus(error instanceof Error ? "底图切换失败：" + error.message : "底图切换失败，已保留当前地图");
+        }
+      });
+    };
+    const requestStyleChange = (request: StyleRequest) => {
+      pendingStyleRequest = request;
+      scheduleNextStyleRequest();
+    };
+
     const unsubscribe = useWorkbenchStore.subscribe((state, previous) => {
       const selectedStripeId = state.selection?.kind === "stripe" ? state.selection.id : undefined;
       const changedStripeIndexes = state.stripes === previous.stripes || state.stripes.length !== previous.stripes.length
@@ -1267,24 +1390,35 @@ export function MapWorkbench() {
         || state.baseMapMode !== previous.baseMapMode
         || state.viewMode !== previous.viewMode;
       if (deckLayersChanged) scheduleRender();
-      if (state.baseMapMode !== previous.baseMapMode) {
-        styleReady = false;
-        void setAmapActive(state.baseMapMode === "amap");
-        map.setStyle(styleForBaseMap(state.baseMapMode, archiveUrl));
-        applyProjection(state.viewMode);
-        map.once("style.load", () => {
-          styleReady = true;
-          ensureStripeLayers();
-          syncStripeSource();
-        });
+      if ((state.layerVisibility.geographicContext !== previous.layerVisibility.geographicContext || state.layerVisibility.chinaStandardMap !== previous.layerVisibility.chinaStandardMap) && styleReady && map.isStyleLoaded()) {
+        ensureStripeLayers();
       }
-      if (state.layerVisibility.chinaStandardMap !== previous.layerVisibility.chinaStandardMap && styleReady && map.isStyleLoaded()) {
-        ensureChinaStandardLayers();
-      }
-      if (state.viewMode !== previous.viewMode) {
-        applyProjection(state.viewMode);
+      const baseMapChanged = state.baseMapMode !== previous.baseMapMode;
+      const viewChanged = state.viewMode !== previous.viewMode;
+      if (baseMapChanged || viewChanged) {
+        if (state.viewMode === "3d") {
+          const center = map.getCenter();
+          planarCamera = {
+            center: [normalizeViewLon(center.lng), center.lat],
+            zoom: map.getZoom(),
+            bearing: map.getBearing(),
+            pitch: map.getPitch()
+          };
+        }
+        void setAmapActive(state.baseMapMode === "amap" && state.viewMode === "2d");
+        container.classList.toggle("amap-globe", state.baseMapMode === "amap" && state.viewMode === "3d");
         map.setMaxZoom(state.viewMode === "3d" ? 8 : 16);
-        useWorkbenchStore.getState().setStatus(state.viewMode === "3d" ? "三维地球检查视图：条带编辑已锁定" : "二维地图编辑视图");
+        const needsStyleChange = baseMapChanged || (viewChanged && state.baseMapMode === "amap");
+        if (needsStyleChange) {
+          requestStyleChange({ baseMapMode: state.baseMapMode, viewMode: state.viewMode, resetCamera: viewChanged });
+        } else if (viewChanged) {
+          applyProjection(state.viewMode, true);
+        }
+        if (viewChanged) {
+          useWorkbenchStore.getState().setStatus(state.viewMode === "3d"
+            ? state.baseMapMode === "amap" ? "高德球面检查视图：条带编辑已锁定" : "三维地球检查视图：条带编辑已锁定"
+            : "二维地图编辑视图");
+        }
       }
       if (state.stripes !== previous.stripes || state.layerVisibility.stripes !== previous.layerVisibility.stripes) syncStripeSource();
       if (state.selection !== previous.selection) syncStripeSource();
@@ -1324,11 +1458,13 @@ export function MapWorkbench() {
     map.once("load", () => {
       if (destroyed) return;
       styleReady = true;
-      applyProjection(useWorkbenchStore.getState().viewMode);
+      const state = useWorkbenchStore.getState();
+      container.classList.toggle("amap-globe", state.baseMapMode === "amap" && state.viewMode === "3d");
+      applyProjection(state.viewMode, state.viewMode === "3d");
       ensureStripeLayers();
       syncStripeSource();
       render();
-      void setAmapActive(useWorkbenchStore.getState().baseMapMode === "amap");
+      void setAmapActive(state.baseMapMode === "amap" && state.viewMode === "2d");
       if (!ensureH3DetailZoom()) updateH3AfterMapIdle();
     });
     fetch(assetUrl("maps/cities.json"))
@@ -1370,6 +1506,8 @@ export function MapWorkbench() {
       if (handleFrame !== null) window.cancelAnimationFrame(handleFrame);
       if (h3ChunkFrame !== null) window.cancelAnimationFrame(h3ChunkFrame);
       if (amapSyncFrame !== null) window.cancelAnimationFrame(amapSyncFrame);
+      if (styleRequestFrame !== null) window.cancelAnimationFrame(styleRequestFrame);
+      if (styleTransitionTimeout !== null) window.clearTimeout(styleTransitionTimeout);
       h3Worker.terminate();
       window.removeEventListener("keydown", onDrawingKeyDown);
       amapActivationId += 1;
