@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Undo2, X } from "lucide-react";
 import maplibregl from "maplibre-gl";
+import { MapView, _GlobeView as GlobeView } from "@deck.gl/core";
 import { MapboxOverlay } from "@deck.gl/mapbox";
 import { LineLayer, PathLayer, PolygonLayer, ScatterplotLayer, TextLayer } from "@deck.gl/layers";
 import { H3HexagonLayer } from "@deck.gl/geo-layers";
@@ -54,6 +55,12 @@ const STRIPE_GLOBE_PARAMETERS = {
   depthCompare: "less-equal" as const,
   depthWriteEnabled: false
 };
+const DECK_PLANAR_VIEW = new MapView({ id: "mapbox" });
+const DECK_GLOBE_VIEW = new GlobeView({ id: "mapbox", resolution: 1 });
+
+function deckViewFor(viewMode: "2d" | "3d") {
+  return viewMode === "3d" ? DECK_GLOBE_VIEW : DECK_PLANAR_VIEW;
+}
 
 let protocolInstalled = false;
 const pmtilesProtocol = new Protocol();
@@ -256,7 +263,12 @@ export function MapWorkbench() {
       }
     });
 
-    const overlay = new MapboxOverlay({ interleaved: true, layers: [] });
+    // MapboxOverlay supports a custom `mapbox` view at runtime, but its public type narrows `views` to null.
+    const overlay = new MapboxOverlay({
+      interleaved: true,
+      views: deckViewFor(initialState.viewMode),
+      layers: []
+    } as unknown as ConstructorParameters<typeof MapboxOverlay>[0]);
     map.addControl(overlay as unknown as maplibregl.IControl);
 
     const handleLayer = document.createElement("div");
@@ -436,6 +448,13 @@ export function MapWorkbench() {
               pitch: 0,
               bearing: 0
             });
+            if (selectedStripe && selectedCenter) {
+              const displayCorners = selectedStripe.corners.map((corner) => pointArrayNear(corner, selectedCenter.lon));
+              map.fitBounds([
+                [Math.min(...displayCorners.map((point) => point[0])), Math.min(...displayCorners.map((point) => point[1]))],
+                [Math.max(...displayCorners.map((point) => point[0])), Math.max(...displayCorners.map((point) => point[1]))]
+              ], { padding: 128, maxZoom: 3.5, duration: 0 });
+            }
           } else if (resetCamera && viewMode === "2d" && planarCamera) {
             map.jumpTo(planarCamera);
             planarCamera = null;
@@ -724,6 +743,7 @@ export function MapWorkbench() {
         : [];
 
       overlay.setProps({
+        views: deckViewFor(state.viewMode),
         layers: [
           new PolygonLayer({
             id: "stripe-plans",
@@ -1021,7 +1041,7 @@ export function MapWorkbench() {
             stroked: true
           })
         ]
-      });
+      } as unknown as Parameters<typeof overlay.setProps>[0]);
 
       updateHandles();
     };
