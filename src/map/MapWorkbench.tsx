@@ -9,7 +9,7 @@ import { makeId } from "../domain/id";
 import { fromEnu, geodesicCircle, haversineKm, scaleStripeAxes, stripeCenter, stripeFrame, toEnu, transformStripe, validateStripePolygon } from "../domain/geometry";
 import { closestOrbitSample, createSensorFootprint, formatSensorFov, orbitHeadingAtIndex } from "../domain/sensorFov";
 import { useWorkbenchStore } from "../store/workbenchStore";
-import { loadAmapSdk, mapLibreZoomToAmapZoom, wgs84ToGcj02, type AmapMapInstance } from "./amap";
+import { loadAmapSdk, mapLibreZoomToAmapZoom, wgs84ToGcj02, type AmapLayerInstance, type AmapMapInstance, type AmapSdk } from "./amap";
 import { createAmapGlobeStyle, createOsmStyle, createWorldStyle, fallbackStyle, transparentOverlayStyle } from "./worldStyle";
 import "maplibre-gl/dist/maplibre-gl.css";
 
@@ -146,11 +146,15 @@ function styleForBaseMap(
   mode: BaseMapMode,
   archiveUrl: string,
   amapOverviewUrl: string,
+  amapSatelliteOverviewUrl: string,
+  surfaceRendering: boolean,
   viewMode: "2d" | "3d"
 ) {
   const projection = viewMode === "3d" ? "globe" : "mercator";
   if (mode === "offline") return createWorldStyle(archiveUrl, projection);
-  if (mode === "amap") return viewMode === "3d" ? createAmapGlobeStyle(amapOverviewUrl, archiveUrl) : transparentOverlayStyle;
+  if (mode === "amap") return viewMode === "3d"
+    ? createAmapGlobeStyle(amapOverviewUrl, archiveUrl, surfaceRendering, amapSatelliteOverviewUrl)
+    : transparentOverlayStyle;
   return createOsmStyle(archiveUrl, projection);
 }
 
@@ -164,6 +168,7 @@ export function MapWorkbench() {
 
     const archiveUrl = assetUrl("maps/world.pmtiles");
     const amapOverviewUrl = assetUrl("maps/amap-overview/");
+    const amapSatelliteOverviewUrl = assetUrl("maps/amap-satellite-overview/");
     const archive = new PMTiles(archiveUrl);
     pmtilesProtocol.add(archive);
     const amapContainer = document.createElement("div");
@@ -182,7 +187,7 @@ export function MapWorkbench() {
     const initialState = useWorkbenchStore.getState();
     const map = new maplibregl.Map({
       container,
-      style: styleForBaseMap(initialState.baseMapMode, archiveUrl, amapOverviewUrl, initialState.viewMode),
+      style: styleForBaseMap(initialState.baseMapMode, archiveUrl, amapOverviewUrl, amapSatelliteOverviewUrl, initialState.layerVisibility.surfaceRendering, initialState.viewMode),
       center: [20, 22],
       zoom: 2,
       minZoom: 1,
@@ -207,6 +212,10 @@ export function MapWorkbench() {
     let mapLoadFailed = false;
     let styleReady = false;
     let amapMap: AmapMapInstance | null = null;
+    let amapSdk: AmapSdk | null = null;
+    let amapStandardLayers: AmapLayerInstance[] = [];
+    let amapSatelliteLayer: AmapLayerInstance | null = null;
+    let amapRoadnetLayer: AmapLayerInstance | null = null;
     let amapActivationId = 0;
     let amapSyncFrame: number | null = null;
     let planarCamera: { center: [number, number]; zoom: number; bearing: number; pitch: number } | null = null;
@@ -297,11 +306,26 @@ export function MapWorkbench() {
       | null = null;
 
     const syncAmapAppearance = () => {
-      const enabled = useWorkbenchStore.getState().layerVisibility.geographicContext;
-      const mapStyle = enabled ? "amap://styles/normal" : "amap://styles/light";
-      amapContainer.dataset.amapGeographicContext = enabled ? "visible" : "hidden";
+      const layers = useWorkbenchStore.getState().layerVisibility;
+      const mapStyle = layers.geographicContext ? "amap://styles/normal" : "amap://styles/light";
+      amapContainer.dataset.amapGeographicContext = layers.geographicContext ? "visible" : "hidden";
+      amapContainer.dataset.amapSurfaceRendering = layers.surfaceRendering ? "visible" : "hidden";
       amapContainer.dataset.amapMapStyle = mapStyle;
       amapMap?.setMapStyle(mapStyle);
+      if (!amapMap?.setLayers || !amapSdk?.TileLayer) return;
+      if (layers.surfaceRendering) {
+        if (!amapSatelliteLayer) {
+          amapSatelliteLayer = new amapSdk.TileLayer.Satellite({ zIndex: 1 });
+          amapSatelliteLayer.__stripeLayerKind = "satellite";
+        }
+        if (!amapRoadnetLayer) {
+          amapRoadnetLayer = new amapSdk.TileLayer.RoadNet({ zIndex: 2 });
+          amapRoadnetLayer.__stripeLayerKind = "roadnet";
+        }
+        amapMap.setLayers(layers.geographicContext ? [amapSatelliteLayer, amapRoadnetLayer] : [amapSatelliteLayer]);
+      } else if (amapStandardLayers.length) {
+        amapMap.setLayers(amapStandardLayers);
+      }
     };
 
     const scheduleAmapViewSync = () => {
@@ -326,6 +350,7 @@ export function MapWorkbench() {
         const configuration = await window.stripeApi.getAmapConfig();
         if (destroyed || activationId !== amapActivationId || useWorkbenchStore.getState().baseMapMode !== "amap" || useWorkbenchStore.getState().viewMode !== "2d") return;
         const sdk = await loadAmapSdk(configuration);
+        amapSdk = sdk;
         if (destroyed || activationId !== amapActivationId || useWorkbenchStore.getState().baseMapMode !== "amap" || useWorkbenchStore.getState().viewMode !== "2d") return;
         if (!amapMap) {
           const center = map.getCenter();
@@ -338,11 +363,15 @@ export function MapWorkbench() {
             showLabel: true,
             animateEnable: false
           });
+          amapStandardLayers = amapMap.getLayers?.() ?? [];
+          amapStandardLayers.forEach((layer) => { layer.__stripeLayerKind = "standard"; });
         }
         syncAmapAppearance();
         amapMap.resize();
         scheduleAmapViewSync();
-        useWorkbenchStore.getState().setStatus("高德二维地图已加载；彩色地理脉络和规划对象已对齐");
+        useWorkbenchStore.getState().setStatus(useWorkbenchStore.getState().layerVisibility.surfaceRendering
+          ? "高德自然地表影像与中文注记已加载；规划对象已对齐"
+          : "高德二维地图已加载；规划对象已对齐");
       } catch (error) {
         if (destroyed || activationId !== amapActivationId || useWorkbenchStore.getState().baseMapMode !== "amap" || useWorkbenchStore.getState().viewMode !== "2d") return;
         container.classList.remove("amap-active");
@@ -1385,7 +1414,14 @@ export function MapWorkbench() {
         map.once("style.load", finish);
         styleTransitionTimeout = window.setTimeout(finish, 12000);
         try {
-          map.setStyle(styleForBaseMap(request.baseMapMode, archiveUrl, amapOverviewUrl, request.viewMode));
+          map.setStyle(styleForBaseMap(
+            request.baseMapMode,
+            archiveUrl,
+            amapOverviewUrl,
+            amapSatelliteOverviewUrl,
+            useWorkbenchStore.getState().layerVisibility.surfaceRendering,
+            request.viewMode
+          ));
           applyProjection(request.viewMode, request.resetCamera);
         } catch (error) {
           finish();
@@ -1431,17 +1467,20 @@ export function MapWorkbench() {
         || state.viewMode !== previous.viewMode;
       if (deckLayersChanged) scheduleRender();
       const geographicContextChanged = state.layerVisibility.geographicContext !== previous.layerVisibility.geographicContext;
-      if (geographicContextChanged && state.baseMapMode === "amap" && state.viewMode === "2d") syncAmapAppearance();
+      const surfaceRenderingChanged = state.layerVisibility.surfaceRendering !== previous.layerVisibility.surfaceRendering;
+      if ((geographicContextChanged || surfaceRenderingChanged) && state.baseMapMode === "amap" && state.viewMode === "2d") syncAmapAppearance();
       if ((geographicContextChanged || state.layerVisibility.chinaStandardMap !== previous.layerVisibility.chinaStandardMap) && styleReady && map.isStyleLoaded()) {
         ensureStripeLayers();
       }
       const baseMapChanged = state.baseMapMode !== previous.baseMapMode;
       const viewChanged = state.viewMode !== previous.viewMode;
       const wantsAmap = state.baseMapMode === "amap" && state.viewMode === "2d";
-      const needsStyleChange = baseMapChanged || (viewChanged && state.baseMapMode === "amap");
-      if (baseMapChanged || viewChanged) {
+      const needsStyleChange = baseMapChanged
+        || (viewChanged && state.baseMapMode === "amap")
+        || (surfaceRenderingChanged && state.baseMapMode === "amap" && state.viewMode === "3d");
+      if (baseMapChanged || viewChanged || (surfaceRenderingChanged && state.baseMapMode === "amap" && state.viewMode === "3d")) {
         if (!needsStyleChange) syncAmapDomVisibility(wantsAmap);
-        if (state.viewMode === "3d") {
+        if (viewChanged && state.viewMode === "3d") {
           const center = map.getCenter();
           planarCamera = {
             center: [normalizeViewLon(center.lng), center.lat],

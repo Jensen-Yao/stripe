@@ -1,5 +1,5 @@
 import { Fragment, useMemo, useState } from "react";
-import { BarChart3, Clipboard, CopyPlus, KeyRound, Orbit, PlayCircle, Plus, RefreshCw, ScanLine, Settings2, Trash2 } from "lucide-react";
+import { BarChart3, Clipboard, CopyPlus, KeyRound, Layers, Orbit, PlayCircle, Plus, RefreshCw, ScanLine, Settings2, Trash2 } from "lucide-react";
 import { coordinatesForOutput, normalizePoint, stripeCenter, stripeMetrics, transformStripe, validateStripePolygon } from "../domain/geometry";
 import { parseStripeInput } from "../domain/importers";
 import { makeId } from "../domain/id";
@@ -486,12 +486,24 @@ function AnalysisTab() {
       </div>
     </div>
     <button className="amap-config-command" type="button" onClick={() => void configureAmap()} title="选择并加密保存高德地图 Web JS API 配置"><KeyRound size={14} />配置高德地图 API</button>
+    {baseMapMode === "amap" && <button
+      className={`amap-render-command${layers.surfaceRendering ? " active" : ""}`}
+      type="button"
+      data-testid="amap-surface-render"
+      aria-pressed={layers.surfaceRendering}
+      onClick={() => {
+        const enabled = !useWorkbenchStore.getState().layerVisibility.surfaceRendering;
+        useWorkbenchStore.getState().setLayerVisibility({ surfaceRendering: enabled });
+        useWorkbenchStore.getState().setStatus(enabled ? "正在加载高德自然地表影像与中文注记..." : "已关闭地表渲染，恢复高德普通地图");
+      }}
+      title="切换高德卫星影像、自然地貌与中文注记渲染"
+    ><Layers size={14} />{layers.surfaceRendering ? "关闭地表渲染" : "地表渲染"}</button>}
     <div className="toggle-grid">
-      <label title={baseMapMode === "amap" && useWorkbenchStore.getState().viewMode === "2d" ? "在高德二维底图内切换彩色标准地理图，显示山地地貌、水系、道路和地名；不会加载离线地图" : "显示国家、行政区、湖泊、河流和通用地名的彩色地理参考层"}><input type="checkbox" checked={layers.geographicContext} onChange={(event) => useWorkbenchStore.getState().setLayerVisibility({ geographicContext: event.target.checked })} />地理脉络</label>
+      <label title={baseMapMode === "amap" ? "切换高德普通地图的行政、水系、道路和地名参考信息；自然地表影像由上方渲染按钮控制" : "显示国家、行政区、湖泊、河流和通用地名的地理参考层"}><input type="checkbox" checked={layers.geographicContext} onChange={(event) => useWorkbenchStore.getState().setLayerVisibility({ geographicContext: event.target.checked })} />地理脉络</label>
       <label title={baseMapMode === "amap" ? "高德底图已包含中国地图表达" : undefined}><input type="checkbox" checked={layers.chinaStandardMap} disabled={baseMapMode === "amap"} onChange={(event) => useWorkbenchStore.getState().setLayerVisibility({ chinaStandardMap: event.target.checked })} />{baseMapMode === "amap" ? "中国表达（高德内置）" : "中国标准表达"}</label>
       {([['stripes','条带'],['satellites','卫星'],['groundTracks','轨迹'],['coverage','覆盖 / 视场'],['groundAssets','地面对象']] as const).map(([key, label]) => <label key={key}><input type="checkbox" checked={layers[key]} onChange={(event) => useWorkbenchStore.getState().setLayerVisibility({ [key]: event.target.checked })} />{label}</label>)}
     </div>
-    <p className="section-note">{baseMapMode === "amap" ? "二维模式始终使用高德底图。开启地理脉络后切换为高德原生彩色标准地理图，显示山地地貌、水系、道路和地名；关闭后使用清爽底图，不会叠加离线地图。高德显示采用 GCJ-02，规划数据和计算结果仍保存为 WGS84。" : "中国标准表达层用于规划显示，覆盖台湾省、钓鱼岛、南海诸岛及相关边界；地理脉络层用于通用国家、水系和行政参考，两者都不参与坐标和面积计算。"}</p>
+    <p className="section-note">{baseMapMode === "amap" ? "“地表渲染”使用高德卫星影像与中文注记，呈现山脉、荒漠、植被和海洋等自然地貌，二维和球面视图共用该选择。关闭后恢复普通高德地图。高德显示采用 GCJ-02，规划数据和计算结果仍保存为 WGS84。" : "中国标准表达层用于规划显示，覆盖台湾省、钓鱼岛、南海诸岛及相关边界；地理脉络层用于通用国家、水系和行政参考，两者都不参与坐标和面积计算。"}</p>
     <h3>H3 网格</h3>
     <label className="check-field"><input type="checkbox" checked={h3.visible} onChange={(event) => useWorkbenchStore.getState().setH3({ visible: event.target.checked })} />显示网格</label>
     <NumberField label="层级 0-13" value={h3.resolution} onChange={(resolution) => useWorkbenchStore.getState().setH3({ resolution: Math.min(13, Math.max(0, Math.round(resolution))) })} />

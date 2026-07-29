@@ -22,12 +22,12 @@ SetCompressorDictSize 32
 ShowInstDetails show
 ShowUninstDetails show
 
-VIProductVersion "0.3.7.0"
+VIProductVersion "0.3.8.0"
 VIAddVersionKey /LANG=2052 "ProductName" "卫星条带规划工具"
 VIAddVersionKey /LANG=2052 "CompanyName" "Jensen-Yao"
 VIAddVersionKey /LANG=2052 "FileDescription" "卫星规划、轨道分析与条带设计工作台"
-VIAddVersionKey /LANG=2052 "FileVersion" "0.3.7"
-VIAddVersionKey /LANG=2052 "ProductVersion" "0.3.7"
+VIAddVersionKey /LANG=2052 "FileVersion" "0.3.8"
+VIAddVersionKey /LANG=2052 "ProductVersion" "0.3.8"
 
 !include "MUI2.nsh"
 !define MUI_ABORTWARNING
@@ -52,7 +52,7 @@ Section "安装" SEC_MAIN
   WriteRegStr HKCU "Software\Stripe" "InstallLocation" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Stripe" "DisplayName" "卫星条带规划工具"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Stripe" "DisplayIcon" "$INSTDIR\Stripe.exe"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Stripe" "DisplayVersion" "0.3.7"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Stripe" "DisplayVersion" "0.3.8"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Stripe" "Publisher" "Jensen-Yao"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Stripe" "UninstallString" '"$INSTDIR\卸载.exe"'
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Stripe" "NoModify" 1

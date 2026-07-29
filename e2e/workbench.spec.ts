@@ -68,8 +68,15 @@ test("switches AMap between SDK 2D and a globe basemap", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => Boolean(window.stripeApi));
   await page.evaluate(() => {
+    class FakeTileLayer {
+      readonly __stripeLayerKind?: string;
+      constructor(kind: string) {
+        this.__stripeLayerKind = kind;
+      }
+    }
     class FakeAmapMap {
       private readonly container: HTMLElement;
+      private layers: Array<{ __stripeLayerKind?: string }>;
 
       constructor(container: HTMLElement, options: Record<string, unknown>) {
         this.container = container;
@@ -77,26 +84,48 @@ test("switches AMap between SDK 2D and a globe basemap", async ({ page }) => {
         const surface = document.createElement("div");
         surface.className = "amap-maps";
         this.container.appendChild(surface);
+        this.layers = [{ __stripeLayerKind: "standard" }];
       }
 
       setZoomAndCenter(zoom: number) { this.container.dataset.fakeAmapZoom = zoom.toFixed(2); }
       setMapStyle(style: string) { this.container.dataset.fakeAmapStyle = style; }
+      getLayers() { return this.layers; }
+      setLayers(layers: Array<{ __stripeLayerKind?: string }>) {
+        this.layers = layers;
+        this.container.dataset.fakeAmapLayerCount = String(layers.length);
+        this.container.dataset.fakeAmapLayerKinds = layers.map((layer) => layer.__stripeLayerKind ?? "unknown").join(",");
+      }
       resize() {}
       destroy() { this.container.replaceChildren(); }
     }
 
     window.stripeApi.getAmapConfig = async () => ({ configured: true, key: "test-key", securityCode: "test-security" });
-    (window as unknown as { AMap: { Map: typeof FakeAmapMap } }).AMap = { Map: FakeAmapMap };
+    (window as unknown as { AMap: { Map: typeof FakeAmapMap; TileLayer: { Satellite: typeof FakeTileLayer; RoadNet: typeof FakeTileLayer } } }).AMap = {
+      Map: FakeAmapMap,
+      TileLayer: {
+        Satellite: class extends FakeTileLayer { constructor() { super("satellite"); } },
+        RoadNet: class extends FakeTileLayer { constructor() { super("roadnet"); } }
+      }
+    };
   });
   await page.getByTestId("tab-analysis").click();
   await page.getByTestId("basemap-amap").click();
   await expect(page.locator(".amap-base-layer")).toHaveCount(1);
+  await expect(page.getByTestId("amap-surface-render")).toBeVisible();
   await expect(page.getByText("中国表达（高德内置）")).toBeVisible();
   await expect(page.getByText("中国表达（高德内置）").locator("input")).toBeDisabled();
   await expect(page.locator(".amap-base-layer")).toHaveClass(/active/);
   await expect(page.locator(".map-workbench")).toHaveAttribute("data-geographic-context", "visible");
   await expect(page.locator(".amap-base-layer")).toHaveAttribute("data-amap-map-style", "amap://styles/normal");
   await expect(page.locator(".amap-base-layer")).toHaveAttribute("data-amap-sync-zoom", "3.00");
+  await page.getByTestId("amap-surface-render").click();
+  await expect(page.getByTestId("amap-surface-render")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".amap-base-layer")).toHaveAttribute("data-amap-surface-rendering", "visible");
+  await expect(page.locator(".amap-base-layer")).toHaveAttribute("data-fake-amap-layer-count", "2");
+  await expect(page.locator(".amap-base-layer")).toHaveAttribute("data-fake-amap-layer-kinds", "satellite,roadnet");
+  await page.getByTestId("amap-surface-render").click();
+  await expect(page.locator(".amap-base-layer")).toHaveAttribute("data-amap-surface-rendering", "hidden");
+  await expect(page.locator(".amap-base-layer")).toHaveAttribute("data-fake-amap-layer-count", "1");
   await page.getByRole("button", { name: "三维" }).click();
   await expect(page.getByText("高德球面检查视图：条带编辑已锁定")).toBeVisible();
   await expect(page.getByTestId("basemap-amap")).toHaveAttribute("aria-pressed", "true");

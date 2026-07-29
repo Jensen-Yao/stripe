@@ -84,6 +84,7 @@ const defaultGroundAsset: GroundAsset = {
 
 const defaultLayerVisibility: LayerVisibility = {
   geographicContext: true,
+  surfaceRendering: false,
   chinaStandardMap: true,
   stripes: true,
   satellites: true,

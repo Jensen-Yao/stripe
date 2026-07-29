@@ -2,21 +2,27 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PNG } from "pngjs";
+import jpeg from "jpeg-js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const outputRoot = path.join(root, "static", "maps", "amap-overview");
 const sourceZoom = 3;
 const sourceTileSize = 256;
 const overviewTileSize = 512;
 const sourceTiles = 2 ** sourceZoom;
 const sourceSize = sourceTiles * sourceTileSize;
 
-async function downloadSourceTile(x, y) {
+async function downloadSourceTile(x, y, style) {
   const server = ((x + y) % 4) + 1;
-  const url = `https://webrd0${server}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x=${x}&y=${y}&z=${sourceZoom}`;
+  const host = style === 6 ? `webst0${server}.is.autonavi.com` : `webrd0${server}.is.autonavi.com`;
+  const url = style === 6
+    ? `https://${host}/appmaptile?style=6&x=${x}&y=${y}&z=${sourceZoom}`
+    : `https://${host}/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x=${x}&y=${y}&z=${sourceZoom}`;
   const response = await fetch(url);
   if (!response.ok) throw new Error(`高德瓦片下载失败: ${response.status} ${url}`);
-  const tile = PNG.sync.read(Buffer.from(await response.arrayBuffer()));
+  const bytes = Buffer.from(await response.arrayBuffer());
+  const tile = bytes[0] === 0xff && bytes[1] === 0xd8
+    ? jpeg.decode(bytes, { useTArray: true, formatAsRGBA: true })
+    : PNG.sync.read(bytes);
   if (tile.width !== sourceTileSize || tile.height !== sourceTileSize) throw new Error(`高德瓦片尺寸异常: ${tile.width}x${tile.height}`);
   return tile;
 }
@@ -25,7 +31,7 @@ function copyTileToWorld(tile, world, tileX, tileY) {
   for (let y = 0; y < sourceTileSize; y += 1) {
     const sourceOffset = y * sourceTileSize * 4;
     const targetOffset = ((tileY * sourceTileSize + y) * sourceSize + tileX * sourceTileSize) * 4;
-    tile.data.copy(world, targetOffset, sourceOffset, sourceOffset + sourceTileSize * 4);
+    world.set(tile.data.subarray(sourceOffset, sourceOffset + sourceTileSize * 4), targetOffset);
   }
 }
 
@@ -56,7 +62,7 @@ function downsample(world, zoom) {
   return { data: output, size };
 }
 
-async function writeTiles(world, zoom) {
+async function writeTiles(world, zoom, outputRoot, label) {
   const { data, size } = downsample(world, zoom);
   const tileCount = 2 ** zoom;
   for (let tileY = 0; tileY < tileCount; tileY += 1) {
@@ -72,17 +78,19 @@ async function writeTiles(world, zoom) {
       await fs.writeFile(path.join(directory, `${tileY}.png`), PNG.sync.write(tile, { colorType: 6, inputColorType: 6 }));
     }
   }
-  console.log(`z${zoom}: ${tileCount * tileCount} 张高德球面概览瓦片`);
+  console.log(`${label} z${zoom}: ${tileCount * tileCount} 张球面概览瓦片`);
 }
 
-async function main() {
+async function createOverview({ style, directory, label }) {
+  const outputRoot = path.join(root, "static", "maps", directory);
   const world = Buffer.alloc(sourceSize * sourceSize * 4);
   for (let y = 0; y < sourceTiles; y += 1) {
-    const row = await Promise.all(Array.from({ length: sourceTiles }, (_, x) => downloadSourceTile(x, y)));
+    const row = await Promise.all(Array.from({ length: sourceTiles }, (_, x) => downloadSourceTile(x, y, style)));
     row.forEach((tile, x) => copyTileToWorld(tile, world, x, y));
   }
   await fs.rm(outputRoot, { recursive: true, force: true });
-  for (let zoom = 0; zoom < sourceZoom; zoom += 1) await writeTiles(world, zoom);
+  for (let zoom = 0; zoom < sourceZoom; zoom += 1) await writeTiles(world, zoom, outputRoot, label);
 }
 
-await main();
+await createOverview({ style: 8, directory: "amap-overview", label: "普通地图" });
+await createOverview({ style: 6, directory: "amap-satellite-overview", label: "自然地表" });

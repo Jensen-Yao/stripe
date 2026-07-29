@@ -133,7 +133,12 @@ export const transparentOverlayStyle: StyleSpecification = {
   ]
 };
 
-export function createAmapGlobeStyle(overviewTileBase: string, archiveUrl?: string): StyleSpecification {
+export function createAmapGlobeStyle(
+  overviewTileBase: string,
+  archiveUrl?: string,
+  surfaceRendering = false,
+  satelliteOverviewTileBase = overviewTileBase
+): StyleSpecification {
   const fallbackLayers: StyleSpecification["layers"] = archiveUrl ? [
     {
       id: "amap-fallback-countries-fill",
@@ -174,7 +179,7 @@ export function createAmapGlobeStyle(overviewTileBase: string, archiveUrl?: stri
   ] : [];
   return {
     version: 8,
-    name: "高德地图球面底图",
+    name: surfaceRendering ? "高德自然地表球面" : "高德地图球面底图",
     projection: { type: "globe" },
     sources: {
       ...(archiveUrl ? {
@@ -186,7 +191,7 @@ export function createAmapGlobeStyle(overviewTileBase: string, archiveUrl?: stri
       } : {}),
       "amap-overview": {
         type: "raster",
-        tiles: [`${overviewTileBase}{z}/{x}/{y}.png`],
+        tiles: [`${surfaceRendering ? satelliteOverviewTileBase : overviewTileBase}{z}/{x}/{y}.png`],
         tileSize: 512,
         minzoom: 0,
         maxzoom: 2,
@@ -194,18 +199,36 @@ export function createAmapGlobeStyle(overviewTileBase: string, archiveUrl?: stri
       },
       amap: {
         type: "raster",
-        tiles: [1, 2, 3, 4].map((index) => `https://webrd0${index}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}`),
+        tiles: [1, 2, 3, 4].map((index) => surfaceRendering
+          ? `https://webst0${index}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}`
+          : `https://webrd0${index}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}`),
         tileSize: 256,
         minzoom: 3,
         maxzoom: 18,
         attribution: "高德地图 © AutoNavi"
-      }
+      },
+      ...(surfaceRendering ? {
+        "amap-annotations": {
+          type: "raster" as const,
+          tiles: [1, 2, 3, 4].map((index) => `https://webst0${index}.is.autonavi.com/appmaptile?style=8&x={x}&y={y}&z={z}`),
+          tileSize: 256,
+          minzoom: 0,
+          maxzoom: 18,
+          attribution: "高德地图 © AutoNavi"
+        }
+      } : {})
     },
     layers: [
-      { id: "background", type: "background", paint: { "background-color": "#d9e6e8" } },
+      { id: "background", type: "background", paint: { "background-color": surfaceRendering ? "#020609" : "#d9e6e8" } },
       ...fallbackLayers,
       { id: "amap-globe-overview", type: "raster", source: "amap-overview", maxzoom: 3, paint: { "raster-fade-duration": 0 } },
-      { id: "amap-globe", type: "raster", source: "amap", minzoom: 3, paint: { "raster-fade-duration": 0 } }
+      { id: "amap-globe", type: "raster", source: "amap", minzoom: 3, paint: { "raster-fade-duration": 0 } },
+      ...(surfaceRendering ? [{
+        id: "amap-globe-annotations",
+        type: "raster" as const,
+        source: "amap-annotations",
+        paint: { "raster-fade-duration": 0 }
+      }] : [])
     ]
   };
 }

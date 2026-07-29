@@ -93,6 +93,8 @@ button { color: inherit; }
 .map-workbench { position: absolute; inset: 0; }
 .amap-base-layer { position: absolute; inset: 0; z-index: 0; display: none; visibility: hidden; pointer-events: none; background: #d9e6e8; }
 .amap-base-layer.active { display: block; visibility: visible; }
+.amap-render-command { width: 100%; margin: 0 0 8px; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.amap-render-command.active { color: #fff; border-color: #17677a; background: #17677a; }
 .map-workbench > .maplibregl-canvas-container { position: absolute; inset: 0; z-index: 1; }
 .map-workbench > .maplibregl-control-container { position: relative; z-index: 6; }
 .map-workbench.amap-active .maplibregl-ctrl-attrib { display: none; }

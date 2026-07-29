@@ -12,12 +12,20 @@ export type AmapConfiguration = {
 export type AmapMapInstance = {
   setZoomAndCenter(zoom: number, center: [number, number], immediately?: boolean): void;
   setMapStyle(style: string): void;
+  getLayers?(): AmapLayerInstance[];
+  setLayers?(layers: AmapLayerInstance[]): void;
   resize(): void;
   destroy(): void;
 };
 
 type AmapConstructor = new (container: HTMLElement, options: Record<string, unknown>) => AmapMapInstance;
-export type AmapSdk = { Map: AmapConstructor };
+export type AmapLayerInstance = { __stripeLayerKind?: "standard" | "satellite" | "roadnet" };
+type AmapLayerConstructor = new (options?: Record<string, unknown>) => AmapLayerInstance;
+type AmapTileLayerNamespace = AmapLayerConstructor & {
+  Satellite: AmapLayerConstructor;
+  RoadNet: AmapLayerConstructor;
+};
+export type AmapSdk = { Map: AmapConstructor; TileLayer?: AmapTileLayerNamespace };
 
 declare global {
   interface Window {

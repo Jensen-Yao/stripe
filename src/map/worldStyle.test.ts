@@ -26,4 +26,20 @@ describe("底图样式回退", () => {
       .toBeLessThan(style.layers.findIndex((layer) => layer.id === "amap-globe"));
     expect(style.layers.find((layer) => layer.id === "amap-globe-overview")).toBeDefined();
   });
+
+  it("高德自然地表球面组合卫星影像与中文注记", () => {
+    const style = createAmapGlobeStyle(
+      "https://stripe.local/maps/amap-overview/",
+      "https://stripe.local/maps/world.pmtiles",
+      true,
+      "https://stripe.local/maps/amap-satellite-overview/"
+    );
+    expect(style.name).toBe("高德自然地表球面");
+    expect(style.sources["amap-overview"]).toMatchObject({
+      tiles: ["https://stripe.local/maps/amap-satellite-overview/{z}/{x}/{y}.png"]
+    });
+    expect(style.sources.amap).toMatchObject({ type: "raster" });
+    expect(style.sources["amap-annotations"]).toMatchObject({ type: "raster" });
+    expect(style.layers.some((layer) => layer.id === "amap-globe-annotations")).toBe(true);
+  });
 });

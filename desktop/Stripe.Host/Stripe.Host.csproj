@@ -9,7 +9,7 @@
     <AssemblyName>Stripe</AssemblyName>
     <RootNamespace>Stripe.Host</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.3.7</Version>
+    <Version>0.3.8</Version>
     <ApplicationIcon>..\..\earth.ico</ApplicationIcon>
     <Deterministic>true</Deterministic>
   </PropertyGroup>

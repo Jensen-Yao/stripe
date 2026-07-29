@@ -30,9 +30,9 @@ npm run build
 npm run dist:win
 ```
 
-输出路径为 `release/Stripe-Setup-0.3.7-x64.exe`。系统需具备 Microsoft Edge WebView2 Runtime；当前 Windows 10/11 通常已随 Edge 安装。
+输出路径为 `release/Stripe-Setup-0.3.8-x64.exe`。系统需具备 Microsoft Edge WebView2 Runtime；当前 Windows 10/11 通常已随 Edge 安装。
 
-高德在线地图为可选底图。二维模式使用高德 Web JS API，三维模式使用高德瓦片的球面检查视图，条带在球面视图中只读。高德二维下，“地理脉络”只在高德内部切换彩色标准地理图与清爽图，不加载或叠加离线世界地图；彩色图包含山地地貌、水系、道路和地名。桌面版首次使用时会尝试从 `D:\Desktop\bot\api\高德地图api\web JS api.txt` 导入 Web JS API Key 与安全密钥，并使用 Windows DPAPI 加密保存在当前用户的本机应用数据目录；也可在“分析 > 图层显示”中手动选择配置文件。密钥不会写入项目文件或 Git 仓库。
+高德在线地图为可选底图。二维模式使用高德 Web JS API，三维模式使用高德瓦片的球面检查视图，条带在球面视图中只读。高德地图提供两个独立控制：`地理脉络`切换行政、水系、道路和地名参考；`地表渲染`切换卫星影像、自然地貌和中文注记。桌面版首次使用时会尝试从 `D:\Desktop\bot\api\高德地图api\web JS api.txt` 导入 Web JS API Key 与安全密钥，并使用 Windows DPAPI 加密保存在当前用户的本机应用数据目录；也可在“分析 > 图层显示”中手动选择配置文件。密钥不会写入项目文件或 Git 仓库。
 
 中国标准地图表达层用于规划显示，覆盖台湾省、钓鱼岛、南海诸岛及相关边界表达，不参与轨道、坐标和面积计算。离线地理参考来自 Natural Earth，行政区划参考几何来自阿里云 DataV。高德二维底图采用 GCJ-02，显示适配器会同步转换地图中心并补偿 WebGL 与高德的一级缩放差；规划对象和分析结果仍以 WGS84 保存和计算。
 
