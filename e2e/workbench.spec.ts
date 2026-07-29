@@ -79,7 +79,8 @@ test("switches AMap between SDK 2D and a globe basemap", async ({ page }) => {
         this.container.appendChild(surface);
       }
 
-      setZoomAndCenter() {}
+      setZoomAndCenter(zoom: number) { this.container.dataset.fakeAmapZoom = zoom.toFixed(2); }
+      setMapStyle(style: string) { this.container.dataset.fakeAmapStyle = style; }
       resize() {}
       destroy() { this.container.replaceChildren(); }
     }
@@ -89,10 +90,13 @@ test("switches AMap between SDK 2D and a globe basemap", async ({ page }) => {
   });
   await page.getByTestId("tab-analysis").click();
   await page.getByTestId("basemap-amap").click();
+  await expect(page.locator(".amap-base-layer")).toHaveCount(1);
   await expect(page.getByText("中国表达（高德内置）")).toBeVisible();
   await expect(page.getByText("中国表达（高德内置）").locator("input")).toBeDisabled();
-  await expect(page.locator(".amap-base-layer")).not.toHaveClass(/active/);
+  await expect(page.locator(".amap-base-layer")).toHaveClass(/active/);
   await expect(page.locator(".map-workbench")).toHaveAttribute("data-geographic-context", "visible");
+  await expect(page.locator(".amap-base-layer")).toHaveAttribute("data-amap-map-style", "amap://styles/normal");
+  await expect(page.locator(".amap-base-layer")).toHaveAttribute("data-amap-sync-zoom", "3.00");
   await page.getByRole("button", { name: "三维" }).click();
   await expect(page.getByText("高德球面检查视图：条带编辑已锁定")).toBeVisible();
   await expect(page.getByTestId("basemap-amap")).toHaveAttribute("aria-pressed", "true");
@@ -104,9 +108,10 @@ test("switches AMap between SDK 2D and a globe basemap", async ({ page }) => {
   await page.getByRole("button", { name: "二维" }).click();
   await expect(page.locator(".map-workbench")).not.toHaveClass(/amap-globe/);
   await expect(page.locator(".map-workbench")).toHaveAttribute("data-map-projection", "mercator");
-  await expect(page.locator(".amap-base-layer")).not.toHaveClass(/active/);
+  await expect(page.locator(".amap-base-layer")).toHaveClass(/active/);
   await page.getByText("地理脉络", { exact: true }).locator("input").uncheck();
   await expect(page.locator(".amap-base-layer")).toHaveClass(/active/);
+  await expect(page.locator(".amap-base-layer")).toHaveAttribute("data-amap-map-style", "amap://styles/light");
   await expect(page.locator(".amap-base-layer")).toHaveAttribute("data-amap-view-mode", "2D");
   await page.getByTestId("basemap-offline").click();
   await expect(page.locator(".amap-base-layer")).not.toHaveClass(/active/);
@@ -133,6 +138,7 @@ test("shows geographic context on AMap and keeps offline and OSM globe views com
         this.container.appendChild(surface);
       }
       setZoomAndCenter() {}
+      setMapStyle(style: string) { this.container.dataset.fakeAmapStyle = style; }
       resize() {}
       destroy() { this.container.replaceChildren(); }
     }
@@ -147,12 +153,15 @@ test("shows geographic context on AMap and keeps offline and OSM globe views com
   await expect(page.locator(".map-workbench")).toHaveAttribute("data-geographic-context", "hidden");
   await geographicContext.check();
   await page.getByTestId("basemap-amap").click();
-  await expect(page.locator(".amap-base-layer")).not.toHaveClass(/active/);
+  await expect(page.locator(".amap-base-layer")).toHaveClass(/active/);
   await expect(page.locator(".map-workbench")).toHaveAttribute("data-geographic-context", "visible");
+  await expect(page.locator(".amap-base-layer")).toHaveAttribute("data-amap-map-style", "amap://styles/normal");
   await geographicContext.uncheck();
   await expect(page.locator(".amap-base-layer")).toHaveClass(/active/);
+  await expect(page.locator(".amap-base-layer")).toHaveAttribute("data-amap-map-style", "amap://styles/light");
   await geographicContext.check();
-  await expect(page.locator(".amap-base-layer")).not.toHaveClass(/active/);
+  await expect(page.locator(".amap-base-layer")).toHaveClass(/active/);
+  await expect(page.locator(".amap-base-layer")).toHaveAttribute("data-amap-map-style", "amap://styles/normal");
   await page.getByRole("button", { name: "三维" }).click();
   await expect(page.locator(".map-workbench")).toHaveAttribute("data-map-projection", "globe");
   await page.getByTestId("basemap-offline").click();
