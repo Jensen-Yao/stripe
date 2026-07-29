@@ -1,6 +1,42 @@
 import { expect, test } from "@playwright/test";
 import { PNG } from "pngjs";
 
+function countStripePixels(buffer: Buffer, bounds?: { left: number; top: number; right: number; bottom: number }) {
+  const image = PNG.sync.read(buffer);
+  const left = Math.floor((bounds?.left ?? 0) * image.width);
+  const top = Math.floor((bounds?.top ?? 0) * image.height);
+  const right = Math.ceil((bounds?.right ?? 1) * image.width);
+  const bottom = Math.ceil((bounds?.bottom ?? 1) * image.height);
+  let count = 0;
+  for (let y = top; y < bottom; y += 1) {
+    for (let x = left; x < right; x += 1) {
+      const offset = (y * image.width + x) * 4;
+      const red = image.data[offset];
+      const green = image.data[offset + 1];
+      const blue = image.data[offset + 2];
+      if (red > 165 && green > 45 && green < 165 && blue < 135 && red - green > 45) count += 1;
+    }
+  }
+  return count;
+}
+
+function countChangedPixels(before: Buffer, after: Buffer, bounds: { left: number; top: number; right: number; bottom: number }) {
+  const first = PNG.sync.read(before);
+  const second = PNG.sync.read(after);
+  expect({ width: first.width, height: first.height }).toEqual({ width: second.width, height: second.height });
+  let count = 0;
+  for (let y = Math.floor(bounds.top * first.height); y < Math.ceil(bounds.bottom * first.height); y += 1) {
+    for (let x = Math.floor(bounds.left * first.width); x < Math.ceil(bounds.right * first.width); x += 1) {
+      const offset = (y * first.width + x) * 4;
+      const difference = Math.abs(first.data[offset] - second.data[offset])
+        + Math.abs(first.data[offset + 1] - second.data[offset + 1])
+        + Math.abs(first.data[offset + 2] - second.data[offset + 2]);
+      if (difference > 24) count += 1;
+    }
+  }
+  return count;
+}
+
 test("loads the Chinese planning workbench", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("卫星规划工作台 0.3")).toBeVisible();
@@ -41,7 +77,7 @@ test("propagates a TLE locally and switches to the globe inspection view", async
 test("draws and renders a stripe in the globe view", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "三维" }).click();
-  await page.getByTitle("绘制多节点条带（双击或回车完成）").click();
+  await page.getByTitle("绘制多节点条带").click();
   const map = page.locator(".map-workbench");
   const bounds = await map.boundingBox();
   expect(bounds).not.toBeNull();
@@ -57,6 +93,36 @@ test("draws and renders a stripe in the globe view", async ({ page }) => {
   await expect(page.getByText(/4 节点条带已生成/)).toBeVisible();
   await expect(map).toHaveAttribute("data-rendered-stripe-count", "1");
   await expect(page.locator(".map-edit-preview")).toBeHidden();
+  const renderedMap = await map.screenshot();
+  expect(countStripePixels(renderedMap, { left: 0.38, top: 0.34, right: 0.62, bottom: 0.62 })).toBeGreaterThan(120);
+});
+
+test("keeps a saved stripe visible when switching between planar and globe views", async ({ page }) => {
+  await page.goto("/");
+  await page.getByTestId("tab-analysis").click();
+  await page.getByRole("button", { name: "生成条带" }).click();
+  const map = page.locator(".map-workbench");
+  await expect(map).toHaveAttribute("data-visible-stripe-count", "1");
+
+  await page.getByRole("button", { name: "三维" }).click();
+  await expect(map).toHaveAttribute("data-map-projection", "globe");
+  await expect(map).toHaveAttribute("data-map-zoom", "3.50");
+  await expect(map).toHaveAttribute("data-rendered-stripe-count", "1");
+  const globeMap = await map.screenshot();
+  const stripeToggle = page.getByText("条带", { exact: true }).locator("input");
+  await stripeToggle.uncheck();
+  const globeWithoutStripe = await map.screenshot();
+  expect(countChangedPixels(globeMap, globeWithoutStripe, { left: 0.44, top: 0.2, right: 0.56, bottom: 0.55 })).toBeGreaterThan(500);
+  await stripeToggle.check();
+
+  await page.getByRole("button", { name: "二维" }).click();
+  await expect(map).toHaveAttribute("data-map-projection", "mercator");
+  await page.getByRole("button", { name: "三维" }).click();
+  await expect(map).toHaveAttribute("data-map-zoom", "3.50");
+  const restoredGlobeMap = await map.screenshot();
+  await stripeToggle.uncheck();
+  const restoredGlobeWithoutStripe = await map.screenshot();
+  expect(countChangedPixels(restoredGlobeMap, restoredGlobeWithoutStripe, { left: 0.44, top: 0.2, right: 0.56, bottom: 0.55 })).toBeGreaterThan(500);
 });
 
 test("opens analysis controls and preserves H3 level 13", async ({ page }) => {
@@ -196,6 +262,7 @@ test("shows geographic context on AMap and keeps offline and OSM globe views com
     (window as unknown as { AMap: { Map: typeof FakeAmapMap } }).AMap = { Map: FakeAmapMap };
   });
   await page.getByTestId("tab-analysis").click();
+  await page.getByRole("button", { name: "生成条带" }).click();
   const geographicContext = page.getByText("地理脉络", { exact: true }).locator("input");
   await expect(geographicContext).toBeChecked();
   await expect(page.locator(".map-workbench")).toHaveAttribute("data-geographic-context", "visible");
@@ -213,13 +280,34 @@ test("shows geographic context on AMap and keeps offline and OSM globe views com
   await expect(page.locator(".amap-base-layer")).toHaveClass(/active/);
   await expect(page.locator(".amap-base-layer")).toHaveAttribute("data-amap-map-style", "amap://styles/normal");
   await page.getByRole("button", { name: "三维" }).click();
-  await expect(page.locator(".map-workbench")).toHaveAttribute("data-map-projection", "globe");
+  const map = page.locator(".map-workbench");
+  const stripeToggle = page.getByText("条带", { exact: true }).locator("input");
+  await expect(map).toHaveAttribute("data-map-projection", "globe");
+  await expect(map).toHaveAttribute("data-map-zoom", "3.50");
+  await expect(map).toHaveAttribute("data-rendered-stripe-count", "1");
+  const amapGlobe = await map.screenshot();
+  await stripeToggle.uncheck();
+  const amapGlobeWithoutStripe = await map.screenshot();
+  expect(countChangedPixels(amapGlobe, amapGlobeWithoutStripe, { left: 0.44, top: 0.2, right: 0.56, bottom: 0.55 })).toBeGreaterThan(100);
+  await stripeToggle.check();
   await page.getByTestId("basemap-offline").click();
   await expect(page.getByTestId("basemap-offline")).toHaveAttribute("aria-pressed", "true");
-  await expect(page.locator(".map-workbench")).toHaveAttribute("data-map-projection", "globe");
+  await expect(map).toHaveAttribute("data-map-projection", "globe");
+  await expect(map).toHaveAttribute("data-rendered-stripe-count", "1");
+  const offlineGlobe = await map.screenshot();
+  await stripeToggle.uncheck();
+  const offlineGlobeWithoutStripe = await map.screenshot();
+  expect(countChangedPixels(offlineGlobe, offlineGlobeWithoutStripe, { left: 0.44, top: 0.2, right: 0.56, bottom: 0.55 })).toBeGreaterThan(100);
+  await stripeToggle.check();
   await page.getByTestId("basemap-osm").click();
   await expect(page.getByTestId("basemap-osm")).toHaveAttribute("aria-pressed", "true");
-  await expect(page.locator(".map-workbench")).toHaveAttribute("data-map-projection", "globe");
+  await expect(map).toHaveAttribute("data-map-projection", "globe");
+  await expect(map).toHaveAttribute("data-rendered-stripe-count", "1");
+  const osmGlobe = await map.screenshot();
+  await stripeToggle.uncheck();
+  const osmGlobeWithoutStripe = await map.screenshot();
+  expect(countChangedPixels(osmGlobe, osmGlobeWithoutStripe, { left: 0.44, top: 0.2, right: 0.56, bottom: 0.55 })).toBeGreaterThan(100);
+  await stripeToggle.check();
   await page.getByRole("button", { name: "二维" }).click();
   await expect(page.locator(".map-workbench")).toHaveAttribute("data-map-projection", "mercator");
   expect(pageErrors).toEqual([]);

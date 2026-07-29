@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Check, Undo2, X } from "lucide-react";
 import maplibregl from "maplibre-gl";
 import { MapboxOverlay } from "@deck.gl/mapbox";
 import { LineLayer, PathLayer, PolygonLayer, ScatterplotLayer, TextLayer } from "@deck.gl/layers";
@@ -10,6 +11,7 @@ import { fromEnu, geodesicCircle, haversineKm, scaleStripeAxes, stripeCenter, st
 import { closestOrbitSample, createSensorFootprint, formatSensorFov, orbitHeadingAtIndex } from "../domain/sensorFov";
 import { useWorkbenchStore } from "../store/workbenchStore";
 import { loadAmapSdk, mapLibreZoomToAmapZoom, wgs84ToGcj02, type AmapLayerInstance, type AmapMapInstance, type AmapSdk } from "./amap";
+import { FINISH_STRIPE_DRAWING_EVENT } from "./drawingEvents";
 import { createAmapGlobeStyle, createOsmStyle, createWorldStyle, fallbackStyle, transparentOverlayStyle } from "./worldStyle";
 import "maplibre-gl/dist/maplibre-gl.css";
 
@@ -19,15 +21,11 @@ type HandleDescriptor = { kind: HandleKind; cornerIndex?: number; insertAfter?: 
 type StripeRenderItem = {
   stripe: Stripe;
   polygon: Array<[number, number]>;
+  globePolygon: Array<[number, number, number]>;
+  globeBoundary: Array<[number, number, number]>;
   fillColor: [number, number, number, number];
   lineColor: [number, number, number, number];
   bounds: { minLon: number; maxLon: number; minLat: number; maxLat: number };
-  edges: Array<{
-    stripeId: string;
-    source: [number, number];
-    target: [number, number];
-    color: [number, number, number, number];
-  }>;
 };
 type OverlapComparisonItem = {
   role: "A" | "B";
@@ -50,6 +48,12 @@ const OFFLINE_CONTEXT_LAYER_IDS = ["countries-fill", "countries-line", "states-l
 const AMAP_FALLBACK_CONTEXT_LAYER_IDS = ["amap-fallback-countries-fill", "amap-fallback-countries-line", "amap-fallback-states-line", "amap-fallback-lakes-fill", "amap-fallback-rivers-line"] as const;
 const H3_MINIMUM_DETAIL_ZOOM = [1, 1, 2, 3, 4, 5, 7, 8.5, 11, 12.5, 13.5, 14.5, 15.5, 16] as const;
 const H3_RENDER_WARMUP_CELL = ["8928308280fffff"];
+const STRIPE_GLOBE_ALTITUDE_METERS = 1200;
+const STRIPE_GLOBE_PARAMETERS = {
+  cullMode: "none" as const,
+  depthCompare: "less-equal" as const,
+  depthWriteEnabled: false
+};
 
 let protocolInstalled = false;
 const pmtilesProtocol = new Protocol();
@@ -107,10 +111,13 @@ function lightenChannels(color: string, alpha: number, mix = 0.16): [number, num
 function createStripeRenderItem(stripe: Stripe): StripeRenderItem {
   const centerLon = stripeCenter(stripe.corners).lon;
   const polygon = stripe.corners.map((corner) => pointArrayNear(corner, centerLon));
+  const globePolygon = polygon.map(([lon, lat]) => [lon, lat, STRIPE_GLOBE_ALTITUDE_METERS] as [number, number, number]);
   const lineColor = lightenChannels(stripe.color, 210, 0.06);
   return {
     stripe,
     polygon,
+    globePolygon,
+    globeBoundary: [...globePolygon, globePolygon[0]],
     fillColor: lightenChannels(stripe.color, 92, 0.22),
     lineColor,
     bounds: {
@@ -118,13 +125,7 @@ function createStripeRenderItem(stripe: Stripe): StripeRenderItem {
       maxLon: Math.max(...polygon.map((point) => point[0])),
       minLat: Math.min(...polygon.map((point) => point[1])),
       maxLat: Math.max(...polygon.map((point) => point[1]))
-    },
-    edges: polygon.map((source, index) => ({
-      stripeId: stripe.id,
-      source,
-      target: polygon[(index + 1) % polygon.length],
-      color: lineColor
-    }))
+    }
   };
 }
 
@@ -177,6 +178,10 @@ function styleForBaseMap(
 
 export function MapWorkbench() {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const finishDraftRef = useRef<() => void>(() => undefined);
+  const undoDraftRef = useRef<() => void>(() => undefined);
+  const cancelDraftRef = useRef<() => void>(() => undefined);
+  const [draftPointCount, setDraftPointCount] = useState(0);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -418,7 +423,19 @@ export function MapWorkbench() {
         const applyCamera = () => {
           if (destroyed || useWorkbenchStore.getState().viewMode !== viewMode) return;
           if (resetCamera && viewMode === "3d") {
-            map.jumpTo({ zoom: 2, pitch: 0, bearing: 0 });
+            const state = useWorkbenchStore.getState();
+            const selectedStripe = state.selection?.kind === "stripe"
+              ? state.stripes.find((stripe) => stripe.id === state.selection?.id && stripe.visible)
+              : undefined;
+            const selectedCenter = selectedStripe ? stripeCenter(selectedStripe.corners) : undefined;
+            map.jumpTo({
+              center: selectedCenter
+                ? [normalizeViewLon(selectedCenter.lon), selectedCenter.lat]
+                : planarCamera?.center ?? map.getCenter(),
+              zoom: selectedStripe ? 3.5 : Math.min(3, Math.max(2, planarCamera?.zoom ?? map.getZoom())),
+              pitch: 0,
+              bearing: 0
+            });
           } else if (resetCamera && viewMode === "2d" && planarCamera) {
             map.jumpTo(planarCamera);
             planarCamera = null;
@@ -643,9 +660,10 @@ export function MapWorkbench() {
         && Boolean(selectedStripe?.visible)
         && state.layerVisibility.stripes;
       const stripeDeckDisplayData = usesDomEditPreview ? stripeDeckDataCache : stripeRenderCache;
+      container.dataset.visibleStripeCount = state.layerVisibility.stripes ? String(stripeRenderCache.length) : "0";
       container.dataset.renderedStripeCount = state.layerVisibility.stripes ? String(stripeDeckDisplayData.length) : "0";
       container.dataset.draftPointCount = String(draftPoints.length);
-      let stripeEdgesForView = stripeDeckDisplayData.length > 300 ? [] : stripeDeckDisplayData.flatMap((item) => item.edges);
+      let stripePathsForView = stripeDeckDisplayData.length > 300 ? [] : stripeDeckDisplayData;
       if (stripeDeckDisplayData.length > 300) {
         const mapBounds = map.getBounds();
         const viewCenterLon = map.getCenter().lng;
@@ -661,8 +679,8 @@ export function MapWorkbench() {
           return item.bounds.maxLon + shift >= west && item.bounds.minLon + shift <= east
             && item.bounds.maxLat >= south && item.bounds.minLat <= north;
         }).map((item) => item.stripe.id));
-        stripeEdgesForView = visibleIds.size <= 300
-          ? stripeDeckDisplayData.filter((item) => visibleIds.has(item.stripe.id)).flatMap((item) => item.edges)
+        stripePathsForView = visibleIds.size <= 300
+          ? stripeDeckDisplayData.filter((item) => visibleIds.has(item.stripe.id))
           : [];
       }
       const spacecraftPoints = visibleSpacecraftCache
@@ -710,7 +728,7 @@ export function MapWorkbench() {
           new PolygonLayer({
             id: "stripe-plans",
             data: state.layerVisibility.stripes ? stripeDeckDisplayData : [],
-            getPolygon: (item) => item.polygon,
+            getPolygon: (item) => state.viewMode === "3d" ? item.globePolygon : item.polygon,
             getFillColor: (item) => item.fillColor,
             getLineColor: (item) => item.lineColor,
             getLineWidth: 1.4,
@@ -718,18 +736,20 @@ export function MapWorkbench() {
             filled: true,
             stroked: false,
             pickable: false,
-            wrapLongitude: false
+            wrapLongitude: false,
+            parameters: state.viewMode === "3d" ? STRIPE_GLOBE_PARAMETERS : undefined
           }),
-          new LineLayer({
+          new PathLayer<StripeRenderItem>({
             id: "stripe-plan-edges",
-            data: state.layerVisibility.stripes ? stripeEdgesForView : [],
-            getSourcePosition: (item) => item.source,
-            getTargetPosition: (item) => item.target,
-            getColor: (item) => item.color,
+            data: state.layerVisibility.stripes ? stripePathsForView : [],
+            getPath: (item) => state.viewMode === "3d" ? item.globeBoundary : [...item.polygon, item.polygon[0]],
+            getColor: (item) => item.lineColor,
             getWidth: 1.4,
             widthUnits: "pixels",
             widthMinPixels: 1,
-            pickable: false
+            pickable: false,
+            wrapLongitude: false,
+            parameters: state.viewMode === "3d" ? STRIPE_GLOBE_PARAMETERS : undefined
           }),
           new PolygonLayer({
             id: "overlap-comparison-polygons",
@@ -1366,10 +1386,32 @@ export function MapWorkbench() {
       });
       const count = draftPoints.length;
       draftPoints = [];
+      setDraftPointCount(0);
       state.setToolMode("select");
       state.setStatus(`${count} 节点条带已生成，可继续插入、删除、移动、旋转和拉伸节点`);
       scheduleRender();
     };
+
+    const undoDraft = () => {
+      if (!draftPoints.length) return;
+      draftPoints = draftPoints.slice(0, -1);
+      setDraftPointCount(draftPoints.length);
+      useWorkbenchStore.getState().setStatus(`已撤回节点，当前 ${draftPoints.length} 个节点`);
+      scheduleRender();
+    };
+
+    const cancelDraft = () => {
+      draftPoints = [];
+      setDraftPointCount(0);
+      const state = useWorkbenchStore.getState();
+      state.setToolMode("select");
+      state.setStatus("已取消本次条带绘制");
+      scheduleRender();
+    };
+
+    finishDraftRef.current = finishDraft;
+    undoDraftRef.current = undoDraft;
+    cancelDraftRef.current = cancelDraft;
 
     const stripeContainsPoint = (stripe: Stripe, point: GeoPoint) => {
       const ring = stripe.corners.map((corner) => pointArrayNear(corner, point.lon));
@@ -1396,8 +1438,18 @@ export function MapWorkbench() {
         return;
       }
       const next = { lon: event.lngLat.lng, lat: event.lngLat.lat };
-      if (!draftPoints.length || haversineKm(draftPoints.at(-1)!, next) > 0.01) draftPoints = [...draftPoints, next];
-      state.setStatus(`已记录 ${draftPoints.length} 个节点；双击、右键或按 Enter 完成，Backspace 撤回节点`);
+      if (draftPoints.length >= 3) {
+        const first = map.project(pointArrayNear(draftPoints[0], map.getCenter().lng));
+        if (Math.hypot(first.x - event.point.x, first.y - event.point.y) <= 14) {
+          finishDraft();
+          return;
+        }
+      }
+      if (!draftPoints.length || haversineKm(draftPoints.at(-1)!, next) > 0.01) {
+        draftPoints = [...draftPoints, next];
+        setDraftPointCount(draftPoints.length);
+      }
+      state.setStatus(`已记录 ${draftPoints.length} 个节点；点击“完成绘制”、首节点、画笔按钮或按 Enter 完成`);
       scheduleRender();
     };
 
@@ -1420,10 +1472,17 @@ export function MapWorkbench() {
         finishDraft();
       } else if (event.key === "Backspace") {
         event.preventDefault();
-        draftPoints = draftPoints.slice(0, -1);
-        useWorkbenchStore.getState().setStatus(`已撤回节点，当前 ${draftPoints.length} 个节点`);
-        scheduleRender();
+        undoDraft();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        cancelDraft();
       }
+    };
+
+    const onFinishDrawingRequest = () => {
+      if (useWorkbenchStore.getState().toolMode !== "draw-stripe") return;
+      if (!draftPoints.length) cancelDraft();
+      else finishDraft();
     };
 
     type StyleRequest = { baseMapMode: BaseMapMode; viewMode: "2d" | "3d"; resetCamera: boolean };
@@ -1561,8 +1620,10 @@ export function MapWorkbench() {
       }
       if (state.toolMode !== "draw-stripe" && previous.toolMode === "draw-stripe") {
         draftPoints = [];
+        setDraftPointCount(0);
         map.doubleClickZoom.enable();
       } else if (state.toolMode === "draw-stripe" && previous.toolMode !== "draw-stripe") {
+        setDraftPointCount(0);
         map.doubleClickZoom.disable();
       }
       if (state.selection !== previous.selection || state.stripes.length > previous.stripes.length) focusSelectionWhenOutside();
@@ -1573,6 +1634,7 @@ export function MapWorkbench() {
     map.on("contextmenu", onMapContextMenu);
     map.on("move", scheduleAmapViewSync);
     window.addEventListener("keydown", onDrawingKeyDown);
+    window.addEventListener(FINISH_STRIPE_DRAWING_EVENT, onFinishDrawingRequest);
     map.on("movestart", () => {
       if (!drag) {
         handleLayer.style.visibility = "hidden";
@@ -1644,6 +1706,10 @@ export function MapWorkbench() {
       if (styleTransitionTimeout !== null) window.clearTimeout(styleTransitionTimeout);
       h3Worker.terminate();
       window.removeEventListener("keydown", onDrawingKeyDown);
+      window.removeEventListener(FINISH_STRIPE_DRAWING_EVENT, onFinishDrawingRequest);
+      finishDraftRef.current = () => undefined;
+      undoDraftRef.current = () => undefined;
+      cancelDraftRef.current = () => undefined;
       amapActivationId += 1;
       amapMap?.destroy();
       amapContainer.remove();
@@ -1653,5 +1719,13 @@ export function MapWorkbench() {
     };
   }, []);
 
-  return <div className="map-workbench" ref={containerRef} />;
+  return <div className="map-workbench-shell">
+    <div className="map-workbench" ref={containerRef} />
+    {draftPointCount > 0 && <div className="drawing-command-bar" role="toolbar" aria-label="条带绘制">
+      <strong>{draftPointCount} 个节点</strong>
+      <button type="button" title="撤回上一个节点" aria-label="撤回上一个节点" onClick={() => undoDraftRef.current()}><Undo2 size={15} /></button>
+      <button type="button" title="取消绘制" aria-label="取消绘制" onClick={() => cancelDraftRef.current()}><X size={15} /></button>
+      <button className="drawing-finish-command" type="button" disabled={draftPointCount < 3} onClick={() => finishDraftRef.current()}><Check size={15} />完成绘制</button>
+    </div>}
+  </div>;
 }
