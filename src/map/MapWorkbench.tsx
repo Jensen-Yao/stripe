@@ -9,7 +9,7 @@ import { makeId } from "../domain/id";
 import { fromEnu, geodesicCircle, haversineKm, scaleStripeAxes, stripeCenter, stripeFrame, toEnu, transformStripe, validateStripePolygon } from "../domain/geometry";
 import { closestOrbitSample, createSensorFootprint, formatSensorFov, orbitHeadingAtIndex } from "../domain/sensorFov";
 import { useWorkbenchStore } from "../store/workbenchStore";
-import { loadAmapSdk, wgs84ToGcj02, type AmapMapInstance } from "./amap";
+import { loadAmapSdk, mapLibreZoomToAmapZoom, wgs84ToGcj02, type AmapMapInstance } from "./amap";
 import { createAmapGlobeStyle, createOsmStyle, createWorldStyle, fallbackStyle, transparentOverlayStyle } from "./worldStyle";
 import "maplibre-gl/dist/maplibre-gl.css";
 
@@ -146,15 +146,11 @@ function styleForBaseMap(
   mode: BaseMapMode,
   archiveUrl: string,
   amapOverviewUrl: string,
-  viewMode: "2d" | "3d",
-  geographicContext: boolean
+  viewMode: "2d" | "3d"
 ) {
   const projection = viewMode === "3d" ? "globe" : "mercator";
   if (mode === "offline") return createWorldStyle(archiveUrl, projection);
-  if (mode === "amap") {
-    if (viewMode === "3d") return createAmapGlobeStyle(amapOverviewUrl, archiveUrl);
-    return geographicContext ? createWorldStyle(archiveUrl, "mercator") : transparentOverlayStyle;
-  }
+  if (mode === "amap") return viewMode === "3d" ? createAmapGlobeStyle(amapOverviewUrl, archiveUrl) : transparentOverlayStyle;
   return createOsmStyle(archiveUrl, projection);
 }
 
@@ -176,7 +172,7 @@ export function MapWorkbench() {
     container.appendChild(amapContainer);
     const syncAmapDomVisibility = (forcedVisible?: boolean) => {
       const state = useWorkbenchStore.getState();
-      const visible = forcedVisible ?? (state.baseMapMode === "amap" && state.viewMode === "2d" && !state.layerVisibility.geographicContext);
+      const visible = forcedVisible ?? (state.baseMapMode === "amap" && state.viewMode === "2d");
       container.dataset.activeBasemap = visible ? "amap-2d" : state.baseMapMode;
       container.dataset.activeViewMode = state.viewMode;
       container.classList.toggle("amap-active", visible);
@@ -186,7 +182,7 @@ export function MapWorkbench() {
     const initialState = useWorkbenchStore.getState();
     const map = new maplibregl.Map({
       container,
-      style: styleForBaseMap(initialState.baseMapMode, archiveUrl, amapOverviewUrl, initialState.viewMode, initialState.layerVisibility.geographicContext),
+      style: styleForBaseMap(initialState.baseMapMode, archiveUrl, amapOverviewUrl, initialState.viewMode),
       center: [20, 22],
       zoom: 2,
       minZoom: 1,
@@ -300,14 +296,24 @@ export function MapWorkbench() {
         }
       | null = null;
 
+    const syncAmapAppearance = () => {
+      const enabled = useWorkbenchStore.getState().layerVisibility.geographicContext;
+      const mapStyle = enabled ? "amap://styles/normal" : "amap://styles/light";
+      amapContainer.dataset.amapGeographicContext = enabled ? "visible" : "hidden";
+      amapContainer.dataset.amapMapStyle = mapStyle;
+      amapMap?.setMapStyle(mapStyle);
+    };
+
     const scheduleAmapViewSync = () => {
-      if (destroyed || amapSyncFrame !== null || !amapMap || useWorkbenchStore.getState().baseMapMode !== "amap" || useWorkbenchStore.getState().viewMode !== "2d" || useWorkbenchStore.getState().layerVisibility.geographicContext) return;
+      if (destroyed || amapSyncFrame !== null || !amapMap || useWorkbenchStore.getState().baseMapMode !== "amap" || useWorkbenchStore.getState().viewMode !== "2d") return;
       amapSyncFrame = window.requestAnimationFrame(() => {
         amapSyncFrame = null;
-        if (destroyed || !amapMap || useWorkbenchStore.getState().baseMapMode !== "amap" || useWorkbenchStore.getState().viewMode !== "2d" || useWorkbenchStore.getState().layerVisibility.geographicContext) return;
+        if (destroyed || !amapMap || useWorkbenchStore.getState().baseMapMode !== "amap" || useWorkbenchStore.getState().viewMode !== "2d") return;
         const center = map.getCenter();
         const gcjCenter = wgs84ToGcj02(normalizeViewLon(center.lng), center.lat);
-        const targetZoom = Math.max(2, Math.min(20, map.getZoom()));
+        const targetZoom = mapLibreZoomToAmapZoom(map.getZoom());
+        amapContainer.dataset.amapSyncZoom = targetZoom.toFixed(2);
+        amapContainer.dataset.amapSyncCenter = `${gcjCenter[0].toFixed(6)},${gcjCenter[1].toFixed(6)}`;
         amapMap.setZoomAndCenter(targetZoom, gcjCenter, true);
       });
     };
@@ -318,25 +324,27 @@ export function MapWorkbench() {
       if (!active) return;
       try {
         const configuration = await window.stripeApi.getAmapConfig();
-        if (destroyed || activationId !== amapActivationId || useWorkbenchStore.getState().baseMapMode !== "amap" || useWorkbenchStore.getState().viewMode !== "2d" || useWorkbenchStore.getState().layerVisibility.geographicContext) return;
+        if (destroyed || activationId !== amapActivationId || useWorkbenchStore.getState().baseMapMode !== "amap" || useWorkbenchStore.getState().viewMode !== "2d") return;
         const sdk = await loadAmapSdk(configuration);
-        if (destroyed || activationId !== amapActivationId || useWorkbenchStore.getState().baseMapMode !== "amap" || useWorkbenchStore.getState().viewMode !== "2d" || useWorkbenchStore.getState().layerVisibility.geographicContext) return;
+        if (destroyed || activationId !== amapActivationId || useWorkbenchStore.getState().baseMapMode !== "amap" || useWorkbenchStore.getState().viewMode !== "2d") return;
         if (!amapMap) {
           const center = map.getCenter();
+          const geographicContext = useWorkbenchStore.getState().layerVisibility.geographicContext;
           amapMap = new sdk.Map(amapContainer, {
             viewMode: "2D",
-            zoom: Math.max(2, Math.min(20, map.getZoom())),
+            zoom: mapLibreZoomToAmapZoom(map.getZoom()),
             center: wgs84ToGcj02(normalizeViewLon(center.lng), center.lat),
-            mapStyle: "amap://styles/normal",
+            mapStyle: geographicContext ? "amap://styles/normal" : "amap://styles/light",
             showLabel: true,
             animateEnable: false
           });
         }
+        syncAmapAppearance();
         amapMap.resize();
         scheduleAmapViewSync();
-        useWorkbenchStore.getState().setStatus("高德在线地图已加载；规划坐标保持 WGS84");
+        useWorkbenchStore.getState().setStatus("高德二维地图已加载；彩色地理脉络和规划对象已对齐");
       } catch (error) {
-        if (destroyed || activationId !== amapActivationId || useWorkbenchStore.getState().baseMapMode !== "amap" || useWorkbenchStore.getState().viewMode !== "2d" || useWorkbenchStore.getState().layerVisibility.geographicContext) return;
+        if (destroyed || activationId !== amapActivationId || useWorkbenchStore.getState().baseMapMode !== "amap" || useWorkbenchStore.getState().viewMode !== "2d") return;
         container.classList.remove("amap-active");
         amapContainer.classList.remove("active");
         useWorkbenchStore.getState().setBaseMapMode("offline");
@@ -382,8 +390,15 @@ export function MapWorkbench() {
     const ensureGeographicContextLayers = () => {
       if (!styleReady) return;
       const state = useWorkbenchStore.getState();
-      const visibility = state.layerVisibility.geographicContext ? "visible" : "none";
+      const usesAmap2d = state.baseMapMode === "amap" && state.viewMode === "2d";
+      const visibility = state.layerVisibility.geographicContext && !usesAmap2d ? "visible" : "none";
       container.dataset.geographicContext = state.layerVisibility.geographicContext ? "visible" : "hidden";
+      if (usesAmap2d) {
+        GEOGRAPHIC_CONTEXT_LAYER_IDS.forEach((id) => {
+          if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", "none");
+        });
+        return;
+      }
       if (map.getSource("amap-fallback-world")) {
         const fallbackVisibility = state.layerVisibility.geographicContext ? "none" : "visible";
         AMAP_FALLBACK_CONTEXT_LAYER_IDS.forEach((id) => {
@@ -1334,7 +1349,7 @@ export function MapWorkbench() {
       }
     };
 
-    type StyleRequest = { baseMapMode: BaseMapMode; viewMode: "2d" | "3d"; geographicContext: boolean; resetCamera: boolean };
+    type StyleRequest = { baseMapMode: BaseMapMode; viewMode: "2d" | "3d"; resetCamera: boolean };
     let styleRequestFrame: number | null = null;
     let styleTransitionActive = false;
     let styleTransitionTimeout: number | null = null;
@@ -1358,19 +1373,19 @@ export function MapWorkbench() {
           }
           styleTransitionActive = false;
           const current = useWorkbenchStore.getState();
-          if (current.baseMapMode === request.baseMapMode && current.viewMode === request.viewMode && current.layerVisibility.geographicContext === request.geographicContext) {
+          if (current.baseMapMode === request.baseMapMode && current.viewMode === request.viewMode) {
             styleReady = true;
             applyProjection(request.viewMode, request.resetCamera);
             ensureStripeLayers();
             syncStripeSource();
-            void setAmapActive(current.baseMapMode === "amap" && current.viewMode === "2d" && !current.layerVisibility.geographicContext);
+            void setAmapActive(current.baseMapMode === "amap" && current.viewMode === "2d");
           }
           scheduleNextStyleRequest();
         };
         map.once("style.load", finish);
         styleTransitionTimeout = window.setTimeout(finish, 12000);
         try {
-          map.setStyle(styleForBaseMap(request.baseMapMode, archiveUrl, amapOverviewUrl, request.viewMode, request.geographicContext));
+          map.setStyle(styleForBaseMap(request.baseMapMode, archiveUrl, amapOverviewUrl, request.viewMode));
           applyProjection(request.viewMode, request.resetCamera);
         } catch (error) {
           finish();
@@ -1416,15 +1431,15 @@ export function MapWorkbench() {
         || state.viewMode !== previous.viewMode;
       if (deckLayersChanged) scheduleRender();
       const geographicContextChanged = state.layerVisibility.geographicContext !== previous.layerVisibility.geographicContext;
+      if (geographicContextChanged && state.baseMapMode === "amap" && state.viewMode === "2d") syncAmapAppearance();
       if ((geographicContextChanged || state.layerVisibility.chinaStandardMap !== previous.layerVisibility.chinaStandardMap) && styleReady && map.isStyleLoaded()) {
         ensureStripeLayers();
       }
       const baseMapChanged = state.baseMapMode !== previous.baseMapMode;
       const viewChanged = state.viewMode !== previous.viewMode;
-      const needsGeographicStyleChange = geographicContextChanged && state.baseMapMode === "amap" && state.viewMode === "2d";
-      const wantsAmap = state.baseMapMode === "amap" && state.viewMode === "2d" && !state.layerVisibility.geographicContext;
-      const needsStyleChange = baseMapChanged || needsGeographicStyleChange || (viewChanged && state.baseMapMode === "amap");
-      if (baseMapChanged || viewChanged || needsGeographicStyleChange) {
+      const wantsAmap = state.baseMapMode === "amap" && state.viewMode === "2d";
+      const needsStyleChange = baseMapChanged || (viewChanged && state.baseMapMode === "amap");
+      if (baseMapChanged || viewChanged) {
         if (!needsStyleChange) syncAmapDomVisibility(wantsAmap);
         if (state.viewMode === "3d") {
           const center = map.getCenter();
@@ -1439,7 +1454,7 @@ export function MapWorkbench() {
         map.setMaxZoom(state.viewMode === "3d" ? 8 : 16);
         if (needsStyleChange) {
           void setAmapActive(false);
-          requestStyleChange({ baseMapMode: state.baseMapMode, viewMode: state.viewMode, geographicContext: state.layerVisibility.geographicContext, resetCamera: viewChanged });
+          requestStyleChange({ baseMapMode: state.baseMapMode, viewMode: state.viewMode, resetCamera: viewChanged });
         } else if (viewChanged) {
           applyProjection(state.viewMode, true);
         }
@@ -1494,7 +1509,7 @@ export function MapWorkbench() {
       ensureStripeLayers();
       syncStripeSource();
       render();
-      void setAmapActive(state.baseMapMode === "amap" && state.viewMode === "2d" && !state.layerVisibility.geographicContext);
+      void setAmapActive(state.baseMapMode === "amap" && state.viewMode === "2d");
       if (!ensureH3DetailZoom()) updateH3AfterMapIdle();
     });
     fetch(assetUrl("maps/cities.json"))
@@ -1542,6 +1557,7 @@ export function MapWorkbench() {
       window.removeEventListener("keydown", onDrawingKeyDown);
       amapActivationId += 1;
       amapMap?.destroy();
+      amapContainer.remove();
       map.remove();
       handleLayer.remove();
       editPreviewSvg.remove();

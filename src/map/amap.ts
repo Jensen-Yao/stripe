@@ -11,6 +11,7 @@ export type AmapConfiguration = {
 
 export type AmapMapInstance = {
   setZoomAndCenter(zoom: number, center: [number, number], immediately?: boolean): void;
+  setMapStyle(style: string): void;
   resize(): void;
   destroy(): void;
 };
@@ -56,6 +57,11 @@ export function wgs84ToGcj02(lon: number, lat: number): [number, number] {
   deltaLat = deltaLat * 180 / ((AXIS * (1 - ECCENTRICITY_SQUARED)) / (magic * sqrtMagic) * PI);
   deltaLon = deltaLon * 180 / (AXIS / sqrtMagic * Math.cos(latitudeRadians) * PI);
   return [lon + deltaLon, lat + deltaLat];
+}
+
+export function mapLibreZoomToAmapZoom(zoom: number) {
+  // MapLibre uses a 512 px world at zoom 0; AMap uses the standard 256 px XYZ world.
+  return Math.max(2, Math.min(20, zoom + 1));
 }
 
 let sdkPromise: Promise<AmapSdk> | null = null;
