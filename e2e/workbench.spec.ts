@@ -37,6 +37,63 @@ function countChangedPixels(before: Buffer, after: Buffer, bounds: { left: numbe
   return count;
 }
 
+function changedPixelStats(before: Buffer, after: Buffer) {
+  const first = PNG.sync.read(before);
+  const second = PNG.sync.read(after);
+  expect({ width: first.width, height: first.height }).toEqual({ width: second.width, height: second.height });
+  const mask = new Uint8Array(first.width * first.height);
+  let count = 0;
+  let minX = first.width;
+  let minY = first.height;
+  let maxX = 0;
+  let maxY = 0;
+  for (let y = 0; y < first.height; y += 1) {
+    for (let x = 0; x < first.width; x += 1) {
+      const pixel = y * first.width + x;
+      const offset = pixel * 4;
+      const difference = Math.abs(first.data[offset] - second.data[offset])
+        + Math.abs(first.data[offset + 1] - second.data[offset + 1])
+        + Math.abs(first.data[offset + 2] - second.data[offset + 2]);
+      if (difference <= 18) continue;
+      mask[pixel] = 1;
+      count += 1;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+  }
+  let largestComponent = 0;
+  const queue = new Int32Array(mask.length);
+  for (let pixel = 0; pixel < mask.length; pixel += 1) {
+    if (!mask[pixel]) continue;
+    let head = 0;
+    let tail = 0;
+    queue[tail++] = pixel;
+    mask[pixel] = 0;
+    while (head < tail) {
+      const current = queue[head++];
+      const x = current % first.width;
+      const y = Math.floor(current / first.width);
+      for (let neighborY = Math.max(0, y - 1); neighborY <= Math.min(first.height - 1, y + 1); neighborY += 1) {
+        for (let neighborX = Math.max(0, x - 1); neighborX <= Math.min(first.width - 1, x + 1); neighborX += 1) {
+          const neighbor = neighborY * first.width + neighborX;
+          if (!mask[neighbor]) continue;
+          mask[neighbor] = 0;
+          queue[tail++] = neighbor;
+        }
+      }
+    }
+    largestComponent = Math.max(largestComponent, tail);
+  }
+  return {
+    count,
+    largestComponent,
+    width: count ? maxX - minX + 1 : 0,
+    height: count ? maxY - minY + 1 : 0
+  };
+}
+
 test("loads the Chinese planning workbench", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("卫星规划工作台 0.3")).toBeVisible();
@@ -123,6 +180,35 @@ test("keeps a saved stripe visible when switching between planar and globe views
   await stripeToggle.uncheck();
   const restoredGlobeWithoutStripe = await map.screenshot();
   expect(countChangedPixels(restoredGlobeMap, restoredGlobeWithoutStripe, { left: 0.44, top: 0.2, right: 0.56, bottom: 0.55 })).toBeGreaterThan(500);
+});
+
+test("renders a long saved stripe as one continuous globe surface", async ({ page }) => {
+  await page.goto("/");
+  await page.getByTestId("tab-analysis").click();
+  const fillParameter = async (label: string, value: number) => {
+    await page.getByText(label, { exact: true }).locator("..").locator("input").fill(String(value));
+  };
+  await fillParameter("中心经度", 90);
+  await fillParameter("中心纬度", 30);
+  await fillParameter("长度 km", 6000);
+  await fillParameter("宽度 km", 300);
+  await fillParameter("方位角", 75);
+  await page.getByRole("button", { name: "生成条带" }).click();
+  await page.getByRole("button", { name: "三维" }).click();
+
+  const map = page.locator(".map-workbench");
+  await expect(map).toHaveAttribute("data-map-projection", "globe");
+  await expect.poll(async () => Number(await map.getAttribute("data-map-zoom"))).toBeLessThan(3.5);
+  await expect(map).toHaveAttribute("data-rendered-stripe-count", "1");
+  const visible = await map.screenshot();
+  const stripeToggle = page.getByText("条带", { exact: true }).locator("input");
+  await stripeToggle.uncheck();
+  const hidden = await map.screenshot();
+  const stats = changedPixelStats(visible, hidden);
+  expect(stats.count).toBeGreaterThan(8000);
+  expect(stats.largestComponent / stats.count).toBeGreaterThan(0.9);
+  expect(stats.width).toBeGreaterThan(450);
+  expect(stats.height).toBeGreaterThan(100);
 });
 
 test("opens analysis controls and preserves H3 level 13", async ({ page }) => {
