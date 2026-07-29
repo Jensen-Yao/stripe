@@ -1,5 +1,6 @@
 import {
   Box,
+  Check,
   FilePlus2,
   FolderOpen,
   MousePointer2,
@@ -14,6 +15,7 @@ import {
   Undo2
 } from "lucide-react";
 import { useWorkbenchStore } from "../store/workbenchStore";
+import { FINISH_STRIPE_DRAWING_EVENT } from "../map/drawingEvents";
 
 function IconButton(props: React.ButtonHTMLAttributes<HTMLButtonElement> & { title: string }) {
   return <button className="icon-button" type="button" {...props} />;
@@ -43,7 +45,7 @@ export function TopToolbar() {
     <header className="top-toolbar">
       <div className="brand-block">
         <strong>Stripe</strong>
-        <span>卫星规划工作台 0.3.8</span>
+        <span>卫星规划工作台 0.3.9</span>
       </div>
       <div className="toolbar-group">
         <IconButton title="新建项目" onClick={() => { if (!store.getState().dirty || window.confirm("当前项目有未保存修改，仍要新建项目吗？")) store.getState().resetProject(); }}><FilePlus2 size={17} /></IconButton>
@@ -56,7 +58,14 @@ export function TopToolbar() {
       <div className="toolbar-divider" />
       <div className="toolbar-group segmented-icons" aria-label="条带工具">
         <IconButton className={toolMode === "select" ? "icon-button active" : "icon-button"} title="选择" onClick={() => store.getState().setToolMode("select")}><MousePointer2 size={17} /></IconButton>
-        <IconButton className={toolMode === "draw-stripe" ? "icon-button active" : "icon-button"} title="绘制多节点条带（双击或回车完成）" onClick={() => store.getState().setToolMode("draw-stripe")}><PenTool size={17} /></IconButton>
+        <IconButton
+          className={toolMode === "draw-stripe" ? "icon-button active" : "icon-button"}
+          title={toolMode === "draw-stripe" ? "完成当前条带" : "绘制多节点条带"}
+          onClick={() => {
+            if (store.getState().toolMode === "draw-stripe") window.dispatchEvent(new Event(FINISH_STRIPE_DRAWING_EVENT));
+            else store.getState().setToolMode("draw-stripe");
+          }}
+        >{toolMode === "draw-stripe" ? <Check size={17} /> : <PenTool size={17} />}</IconButton>
         <IconButton className={toolMode === "rotate" ? "icon-button active" : "icon-button"} title="旋转模式" onClick={() => store.getState().setToolMode("rotate")}><RotateCw size={17} /></IconButton>
         <IconButton className={toolMode === "stretch" ? "icon-button active" : "icon-button"} title="拉伸模式" onClick={() => store.getState().setToolMode("stretch")}><Scaling size={17} /></IconButton>
       </div>

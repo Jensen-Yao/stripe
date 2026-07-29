@@ -30,7 +30,7 @@ npm run build
 npm run dist:win
 ```
 
-输出路径为 `release/Stripe-Setup-0.3.8-x64.exe`。系统需具备 Microsoft Edge WebView2 Runtime；当前 Windows 10/11 通常已随 Edge 安装。
+输出路径为 `release/Stripe-Setup-0.3.9-x64.exe`。系统需具备 Microsoft Edge WebView2 Runtime；当前 Windows 10/11 通常已随 Edge 安装。
 
 高德在线地图为可选底图。二维模式使用高德 Web JS API，三维模式使用高德瓦片的球面规划视图；球面视图支持显示、选择和绘制条带，节点、旋转和拉伸等精细变换在二维视图中完成。高德地图提供两个独立控制：`地理脉络`切换行政、水系、道路和地名参考；`地表渲染`切换卫星影像和自然地貌。桌面版首次使用时会尝试从 `D:\Desktop\bot\api\高德地图api\web JS api.txt` 导入 Web JS API Key 与安全密钥，并使用 Windows DPAPI 加密保存在当前用户的本机应用数据目录；也可在“分析 > 图层显示”中手动选择配置文件。密钥不会写入项目文件或 Git 仓库。
 

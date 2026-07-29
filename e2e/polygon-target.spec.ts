@@ -4,7 +4,7 @@ test("draws an arbitrary polygon and edits target radius", async ({ page }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.goto("/");
-  await page.getByTitle("绘制多节点条带（双击或回车完成）").click();
+  await page.getByTitle("绘制多节点条带").click();
   const map = page.locator(".map-workbench");
   const box = await map.boundingBox();
   expect(box).not.toBeNull();
