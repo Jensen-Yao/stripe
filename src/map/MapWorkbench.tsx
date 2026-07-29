@@ -87,14 +87,31 @@ function colorChannels(color: string, alpha: number): [number, number, number, n
   ];
 }
 
+function lightenChannels(color: string, alpha: number, mix = 0.16): [number, number, number, number] {
+  const value = color.replace("#", "");
+  const normalized = value.length === 3 ? value.split("").map((channel) => channel + channel).join("") : value;
+  if (!/^[0-9a-f]{6}$/i.test(normalized)) return [33, 137, 162, alpha];
+  const channels = [
+    Number.parseInt(normalized.slice(0, 2), 16),
+    Number.parseInt(normalized.slice(2, 4), 16),
+    Number.parseInt(normalized.slice(4, 6), 16)
+  ];
+  return [
+    Math.round(channels[0] + (255 - channels[0]) * mix),
+    Math.round(channels[1] + (255 - channels[1]) * mix),
+    Math.round(channels[2] + (255 - channels[2]) * mix),
+    alpha
+  ];
+}
+
 function createStripeRenderItem(stripe: Stripe): StripeRenderItem {
   const centerLon = stripeCenter(stripe.corners).lon;
   const polygon = stripe.corners.map((corner) => pointArrayNear(corner, centerLon));
-  const lineColor = colorChannels(stripe.color, 225);
+  const lineColor = lightenChannels(stripe.color, 210, 0.06);
   return {
     stripe,
     polygon,
-    fillColor: colorChannels(stripe.color, 52),
+    fillColor: lightenChannels(stripe.color, 92, 0.22),
     lineColor,
     bounds: {
       minLon: Math.min(...polygon.map((point) => point[0])),
@@ -370,7 +387,7 @@ export function MapWorkbench() {
         amapMap.resize();
         scheduleAmapViewSync();
         useWorkbenchStore.getState().setStatus(useWorkbenchStore.getState().layerVisibility.surfaceRendering
-          ? "高德自然地表影像与中文注记已加载；规划对象已对齐"
+          ? "高德自然地表影像已加载；中文注记由地理脉络控制，规划对象已对齐"
           : "高德二维地图已加载；规划对象已对齐");
       } catch (error) {
         if (destroyed || activationId !== amapActivationId || useWorkbenchStore.getState().baseMapMode !== "amap" || useWorkbenchStore.getState().viewMode !== "2d") return;
@@ -420,6 +437,7 @@ export function MapWorkbench() {
       if (!styleReady) return;
       const state = useWorkbenchStore.getState();
       const usesAmap2d = state.baseMapMode === "amap" && state.viewMode === "2d";
+      const usesAmapGlobe = state.baseMapMode === "amap" && state.viewMode === "3d";
       const visibility = state.layerVisibility.geographicContext && !usesAmap2d ? "visible" : "none";
       container.dataset.geographicContext = state.layerVisibility.geographicContext ? "visible" : "hidden";
       if (usesAmap2d) {
@@ -428,8 +446,20 @@ export function MapWorkbench() {
         });
         return;
       }
+      if (usesAmapGlobe) {
+        AMAP_FALLBACK_CONTEXT_LAYER_IDS.forEach((id) => {
+          if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", visibility);
+        });
+        if (map.getLayer("amap-globe-annotations")) {
+          map.setLayoutProperty("amap-globe-annotations", "visibility", visibility);
+        }
+        GEOGRAPHIC_CONTEXT_LAYER_IDS.forEach((id) => {
+          if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", "none");
+        });
+        return;
+      }
       if (map.getSource("amap-fallback-world")) {
-        const fallbackVisibility = state.layerVisibility.geographicContext ? "none" : "visible";
+        const fallbackVisibility = state.layerVisibility.geographicContext ? "visible" : "none";
         AMAP_FALLBACK_CONTEXT_LAYER_IDS.forEach((id) => {
           if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", fallbackVisibility);
         });
@@ -533,7 +563,7 @@ export function MapWorkbench() {
       });
     };
 
-    const updateEditPreview = (corners: readonly GeoPoint[] | null) => {
+    const updateEditPreview = (corners: readonly GeoPoint[] | null, color = "#e9693f") => {
       if (!corners) {
         editPreviewSvg.style.display = "none";
         return;
@@ -544,6 +574,8 @@ export function MapWorkbench() {
         return `${projected.x},${projected.y}`;
       }).join(" ");
       editPreviewPolygon.setAttribute("points", points);
+      editPreviewPolygon.setAttribute("fill", color);
+      editPreviewPolygon.setAttribute("stroke", color);
       editPreviewSvg.style.display = "block";
     };
 
@@ -557,11 +589,17 @@ export function MapWorkbench() {
       const nextHandleKey = selectedStripe && state.toolMode !== "draw-stripe" && state.viewMode === "2d"
         ? `${selectedStripe.id}:${selectedStripe.updatedAt}:${map.getZoom().toFixed(4)}:${center.lng.toFixed(5)}:${center.lat.toFixed(5)}`
         : "none";
-      if (nextHandleKey === handleRenderKey) return;
+      if (nextHandleKey === handleRenderKey) {
+        if (nextHandleKey === "none") {
+          handleLayer.replaceChildren();
+          updateEditPreview(null);
+        }
+        return;
+      }
       handleRenderKey = nextHandleKey;
       handleLayer.replaceChildren();
       if (selectedStripe && selectedStripe.visible && state.layerVisibility.stripes && state.toolMode !== "draw-stripe" && state.viewMode === "2d") {
-        updateEditPreview((previewStripe ?? selectedStripe).corners);
+        updateEditPreview((previewStripe ?? selectedStripe).corners, selectedStripe.color);
         createHandles(previewStripe ?? selectedStripe);
       } else {
         updateEditPreview(null);
@@ -597,15 +635,25 @@ export function MapWorkbench() {
         stripeDeckSelectionId = selectedStripeId;
         stripeDeckDataCache = stripeRenderCache.filter((item) => item.stripe.id !== selectedStripeId);
       }
-      let stripeEdgesForView = stripeRenderCache.length > 300 ? [] : stripeDeckDataCache.flatMap((item) => item.edges);
-      if (stripeRenderCache.length > 300) {
+      const selectedStripe = selectedStripeId
+        ? state.stripes.find((stripe) => stripe.id === selectedStripeId)
+        : undefined;
+      const usesDomEditPreview = state.viewMode === "2d"
+        && state.toolMode !== "draw-stripe"
+        && Boolean(selectedStripe?.visible)
+        && state.layerVisibility.stripes;
+      const stripeDeckDisplayData = usesDomEditPreview ? stripeDeckDataCache : stripeRenderCache;
+      container.dataset.renderedStripeCount = state.layerVisibility.stripes ? String(stripeDeckDisplayData.length) : "0";
+      container.dataset.draftPointCount = String(draftPoints.length);
+      let stripeEdgesForView = stripeDeckDisplayData.length > 300 ? [] : stripeDeckDisplayData.flatMap((item) => item.edges);
+      if (stripeDeckDisplayData.length > 300) {
         const mapBounds = map.getBounds();
         const viewCenterLon = map.getCenter().lng;
         const west = mapBounds.getWest();
         const east = mapBounds.getEast();
         const south = mapBounds.getSouth();
         const north = mapBounds.getNorth();
-        const visibleIds = new Set(stripeRenderCache.filter((item) => {
+        const visibleIds = new Set(stripeDeckDisplayData.filter((item) => {
           const itemCenterLon = (item.bounds.minLon + item.bounds.maxLon) / 2;
           let shift = 0;
           while (itemCenterLon + shift - viewCenterLon > 180) shift -= 360;
@@ -614,7 +662,7 @@ export function MapWorkbench() {
             && item.bounds.maxLat >= south && item.bounds.minLat <= north;
         }).map((item) => item.stripe.id));
         stripeEdgesForView = visibleIds.size <= 300
-          ? stripeDeckDataCache.filter((item) => visibleIds.has(item.stripe.id)).flatMap((item) => item.edges)
+          ? stripeDeckDisplayData.filter((item) => visibleIds.has(item.stripe.id)).flatMap((item) => item.edges)
           : [];
       }
       const spacecraftPoints = visibleSpacecraftCache
@@ -661,7 +709,7 @@ export function MapWorkbench() {
         layers: [
           new PolygonLayer({
             id: "stripe-plans",
-            data: state.layerVisibility.stripes ? stripeDeckDataCache : [],
+            data: state.layerVisibility.stripes ? stripeDeckDisplayData : [],
             getPolygon: (item) => item.polygon,
             getFillColor: (item) => item.fillColor,
             getLineColor: (item) => item.lineColor,
@@ -1338,7 +1386,7 @@ export function MapWorkbench() {
 
     const onMapClick = (event: maplibregl.MapMouseEvent) => {
       const state = useWorkbenchStore.getState();
-      if (state.toolMode !== "draw-stripe" || state.viewMode !== "2d") {
+      if (state.toolMode !== "draw-stripe") {
         const point = { lon: event.lngLat.lng, lat: event.lngLat.lat };
         const stripe = [...state.stripes].reverse().find((item) => item.visible && stripeContainsPoint(item, point));
         if (stripe) {
@@ -1499,7 +1547,9 @@ export function MapWorkbench() {
         }
         if (viewChanged) {
           useWorkbenchStore.getState().setStatus(state.viewMode === "3d"
-            ? state.baseMapMode === "amap" ? "高德球面检查视图：条带编辑已锁定" : "三维地球检查视图：条带编辑已锁定"
+            ? state.baseMapMode === "amap"
+              ? "高德球面规划视图：支持绘制与选择条带，精细变换请切回二维"
+              : "三维地球规划视图：支持绘制与选择条带，精细变换请切回二维"
             : "二维地图编辑视图");
         }
       }

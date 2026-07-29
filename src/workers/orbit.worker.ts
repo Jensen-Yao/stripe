@@ -337,7 +337,7 @@ async function computeAccessWindows(requestId: string, payload: AccessPayload) {
 async function handle(request: OrbitRequest): Promise<OrbitResponse> {
   try {
     if (request.command === "health") {
-      return { requestId: request.requestId, ok: true, result: { engine: "Stripe 轻量轨道内核", version: "0.3.7", dataReady: true } };
+      return { requestId: request.requestId, ok: true, result: { engine: "Stripe 轻量轨道内核", version: "0.3.8", dataReady: true } };
     }
     if (request.command === "orbit/propagate") {
       const result = await propagateSpacecraft(request.requestId, request.payload as PropagatePayload);

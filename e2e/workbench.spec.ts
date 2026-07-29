@@ -33,9 +33,30 @@ test("propagates a TLE locally and switches to the globe inspection view", async
   await expect(page.getByText("当前状态")).toBeVisible();
   await expect(page.getByText("TEME 位置")).toBeVisible();
   await page.getByRole("button", { name: "三维" }).click();
-  await expect(page.getByText("三维地球检查视图：条带编辑已锁定")).toBeVisible();
+  await expect(page.getByText("三维地球规划视图：支持绘制与选择条带，精细变换请切回二维")).toBeVisible();
   await expect(page.locator(".map-workbench canvas").first()).toBeVisible();
   expect(pageErrors).toEqual([]);
+});
+
+test("draws and renders a stripe in the globe view", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "三维" }).click();
+  await page.getByTitle("绘制多节点条带（双击或回车完成）").click();
+  const map = page.locator(".map-workbench");
+  const bounds = await map.boundingBox();
+  expect(bounds).not.toBeNull();
+  const points = [
+    [bounds!.width * 0.44, bounds!.height * 0.42],
+    [bounds!.width * 0.56, bounds!.height * 0.42],
+    [bounds!.width * 0.56, bounds!.height * 0.54],
+    [bounds!.width * 0.44, bounds!.height * 0.54]
+  ];
+  for (const [x, y] of points) await map.click({ position: { x, y } });
+  await expect(map).toHaveAttribute("data-draft-point-count", "4");
+  await page.keyboard.press("Enter");
+  await expect(page.getByText(/4 节点条带已生成/)).toBeVisible();
+  await expect(map).toHaveAttribute("data-rendered-stripe-count", "1");
+  await expect(page.locator(".map-edit-preview")).toBeHidden();
 });
 
 test("opens analysis controls and preserves H3 level 13", async ({ page }) => {
@@ -127,7 +148,7 @@ test("switches AMap between SDK 2D and a globe basemap", async ({ page }) => {
   await expect(page.locator(".amap-base-layer")).toHaveAttribute("data-amap-surface-rendering", "hidden");
   await expect(page.locator(".amap-base-layer")).toHaveAttribute("data-fake-amap-layer-count", "1");
   await page.getByRole("button", { name: "三维" }).click();
-  await expect(page.getByText("高德球面检查视图：条带编辑已锁定")).toBeVisible();
+  await expect(page.getByText("高德球面规划视图：支持绘制与选择条带，精细变换请切回二维")).toBeVisible();
   await expect(page.getByTestId("basemap-amap")).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator(".map-workbench")).toHaveClass(/amap-globe/);
   await expect(page.locator(".map-workbench")).toHaveAttribute("data-map-projection", "globe");

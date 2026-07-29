@@ -145,36 +145,41 @@ export function createAmapGlobeStyle(
       type: "fill",
       source: "amap-fallback-world",
       "source-layer": "countries",
-      paint: { "fill-color": "#d7ded3", "fill-opacity": 0.98 }
+      maxzoom: 3,
+      paint: { "fill-color": "#dce6dd", "fill-opacity": 0.08 }
     },
     {
       id: "amap-fallback-countries-line",
       type: "line",
       source: "amap-fallback-world",
       "source-layer": "countries",
-      paint: { "line-color": "#637b76", "line-width": ["interpolate", ["linear"], ["zoom"], 0, 0.45, 8, 1.2] }
+      maxzoom: 3,
+      paint: { "line-color": "#6f8d87", "line-opacity": 0.62, "line-width": ["interpolate", ["linear"], ["zoom"], 0, 0.45, 3, 0.85] }
     },
     {
       id: "amap-fallback-states-line",
       type: "line",
       source: "amap-fallback-world",
       "source-layer": "states",
-      minzoom: 3,
-      paint: { "line-color": "#89958d", "line-opacity": 0.72, "line-width": ["interpolate", ["linear"], ["zoom"], 3, 0.35, 8, 0.9] }
+      minzoom: 2,
+      maxzoom: 3,
+      paint: { "line-color": "#849d97", "line-opacity": 0.5, "line-width": 0.45 }
     },
     {
       id: "amap-fallback-lakes-fill",
       type: "fill",
       source: "amap-fallback-world",
       "source-layer": "lakes",
-      paint: { "fill-color": "#bad9e1", "fill-opacity": 1 }
+      maxzoom: 3,
+      paint: { "fill-color": "#8fc9d8", "fill-opacity": 0.38 }
     },
     {
       id: "amap-fallback-rivers-line",
       type: "line",
       source: "amap-fallback-world",
       "source-layer": "rivers",
-      paint: { "line-color": "#8eb9c8", "line-width": ["interpolate", ["linear"], ["zoom"], 2, 0.35, 8, 1.1] }
+      maxzoom: 3,
+      paint: { "line-color": "#80b7c6", "line-opacity": 0.58, "line-width": ["interpolate", ["linear"], ["zoom"], 0, 0.3, 3, 0.7] }
     }
   ] : [];
   return {
@@ -219,15 +224,42 @@ export function createAmapGlobeStyle(
       } : {})
     },
     layers: [
-      { id: "background", type: "background", paint: { "background-color": surfaceRendering ? "#020609" : "#d9e6e8" } },
+      { id: "background", type: "background", paint: { "background-color": surfaceRendering ? "#c7d9dc" : "#d9e6e8" } },
+      {
+        id: "amap-globe-overview",
+        type: "raster",
+        source: "amap-overview",
+        maxzoom: 3,
+        paint: surfaceRendering ? {
+          "raster-fade-duration": 0,
+          "raster-opacity": 0.88,
+          "raster-brightness-min": 0.12,
+          "raster-brightness-max": 0.98,
+          "raster-saturation": -0.12,
+          "raster-contrast": -0.12
+        } : { "raster-fade-duration": 0 }
+      },
+      {
+        id: "amap-globe",
+        type: "raster",
+        source: "amap",
+        minzoom: 3,
+        paint: surfaceRendering ? {
+          "raster-fade-duration": 0,
+          "raster-opacity": 0.9,
+          "raster-brightness-min": 0.1,
+          "raster-brightness-max": 0.98,
+          "raster-saturation": -0.1,
+          "raster-contrast": -0.1
+        } : { "raster-fade-duration": 0 }
+      },
       ...fallbackLayers,
-      { id: "amap-globe-overview", type: "raster", source: "amap-overview", maxzoom: 3, paint: { "raster-fade-duration": 0 } },
-      { id: "amap-globe", type: "raster", source: "amap", minzoom: 3, paint: { "raster-fade-duration": 0 } },
       ...(surfaceRendering ? [{
         id: "amap-globe-annotations",
         type: "raster" as const,
         source: "amap-annotations",
-        paint: { "raster-fade-duration": 0 }
+        minzoom: 3,
+        paint: { "raster-fade-duration": 0, "raster-opacity": 0.78 }
       }] : [])
     ]
   };

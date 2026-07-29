@@ -15,15 +15,17 @@ describe("底图样式回退", () => {
     }
   });
 
-  it("高德球面保留本地回退并把在线瓦片放在上层", () => {
+  it("高德球面以本地低层级脉络覆盖概览图，但不延伸到在线高层级", () => {
     const style = createAmapGlobeStyle(
       "https://stripe.local/maps/amap-overview/",
       "https://stripe.local/maps/world.pmtiles"
     );
     expect(style.projection).toEqual({ type: "globe" });
     expect(style.sources["amap-fallback-world"]).toMatchObject({ type: "vector" });
+    const fallback = style.layers.find((layer) => layer.id === "amap-fallback-countries-fill");
     expect(style.layers.findIndex((layer) => layer.id === "amap-fallback-countries-fill"))
-      .toBeLessThan(style.layers.findIndex((layer) => layer.id === "amap-globe"));
+      .toBeGreaterThan(style.layers.findIndex((layer) => layer.id === "amap-globe-overview"));
+    expect(fallback).toMatchObject({ maxzoom: 3 });
     expect(style.layers.find((layer) => layer.id === "amap-globe-overview")).toBeDefined();
   });
 
@@ -40,6 +42,10 @@ describe("底图样式回退", () => {
     });
     expect(style.sources.amap).toMatchObject({ type: "raster" });
     expect(style.sources["amap-annotations"]).toMatchObject({ type: "raster" });
-    expect(style.layers.some((layer) => layer.id === "amap-globe-annotations")).toBe(true);
+    expect(style.layers.find((layer) => layer.id === "amap-globe-annotations")).toMatchObject({ minzoom: 3 });
+    expect(style.layers.find((layer) => layer.id === "amap-globe-overview")?.paint).toMatchObject({
+      "raster-opacity": 0.88,
+      "raster-contrast": -0.12
+    });
   });
 });
