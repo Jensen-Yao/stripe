@@ -91,8 +91,8 @@ button { color: inherit; }
 
 .viewport-panel { grid-column: 2; grid-row: 1; min-width: 0; min-height: 0; position: relative; background: #d9e6e8; overflow: hidden; }
 .map-workbench { position: absolute; inset: 0; }
-.amap-base-layer { position: absolute; inset: 0; z-index: 0; visibility: hidden; pointer-events: none; background: #d9e6e8; }
-.amap-base-layer.active { visibility: visible; }
+.amap-base-layer { position: absolute; inset: 0; z-index: 0; display: none; visibility: hidden; pointer-events: none; background: #d9e6e8; }
+.amap-base-layer.active { display: block; visibility: visible; }
 .map-workbench > .maplibregl-canvas-container { position: absolute; inset: 0; z-index: 1; }
 .map-workbench > .maplibregl-control-container { position: relative; z-index: 6; }
 .map-workbench.amap-active .maplibregl-ctrl-attrib { display: none; }
@@ -203,4 +203,9 @@ button { color: inherit; }
   .brand-block { width: 164px; min-width: 164px; }
   .brand-block span { display: none; }
   .field-row { grid-template-columns: 96px minmax(0, 1fr); }
+}
+
+@media (max-height: 780px) {
+  .app-shell { grid-template-rows: 44px minmax(0, 1fr) 22px; }
+  .workspace-grid { grid-template-rows: minmax(0, 1fr) 142px; }
 }

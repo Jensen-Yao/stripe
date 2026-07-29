@@ -487,11 +487,11 @@ function AnalysisTab() {
     </div>
     <button className="amap-config-command" type="button" onClick={() => void configureAmap()} title="选择并加密保存高德地图 Web JS API 配置"><KeyRound size={14} />配置高德地图 API</button>
     <div className="toggle-grid">
-      <label title="显示国家、行政区、湖泊、河流和通用地名的彩色地理参考层"><input type="checkbox" checked={layers.geographicContext} onChange={(event) => useWorkbenchStore.getState().setLayerVisibility({ geographicContext: event.target.checked })} />地理脉络</label>
+      <label title={baseMapMode === "amap" && useWorkbenchStore.getState().viewMode === "2d" ? "二维高德与本地地理脉络互斥：开启时显示本地 WGS84 地理底图，关闭时显示高德 GCJ-02 底图" : "显示国家、行政区、湖泊、河流和通用地名的彩色地理参考层"}><input type="checkbox" checked={layers.geographicContext} onChange={(event) => useWorkbenchStore.getState().setLayerVisibility({ geographicContext: event.target.checked })} />地理脉络</label>
       <label title={baseMapMode === "amap" ? "高德底图已包含中国地图表达" : undefined}><input type="checkbox" checked={layers.chinaStandardMap} disabled={baseMapMode === "amap"} onChange={(event) => useWorkbenchStore.getState().setLayerVisibility({ chinaStandardMap: event.target.checked })} />{baseMapMode === "amap" ? "中国表达（高德内置）" : "中国标准表达"}</label>
       {([['stripes','条带'],['satellites','卫星'],['groundTracks','轨迹'],['coverage','覆盖 / 视场'],['groundAssets','地面对象']] as const).map(([key, label]) => <label key={key}><input type="checkbox" checked={layers[key]} onChange={(event) => useWorkbenchStore.getState().setLayerVisibility({ [key]: event.target.checked })} />{label}</label>)}
     </div>
-    <p className="section-note">{baseMapMode === "amap" ? "高德底图使用内置地图表达，离线中国边界与文字层已隐藏；可用地理脉络显示彩色国家、水系和行政参考。三维按钮切换高德球面地图。高德二维底图为 GCJ-02，规划坐标与计算结果为 WGS84，可能存在可见偏移。" : "中国标准表达层用于规划显示，覆盖台湾省、钓鱼岛、南海诸岛及相关边界；地理脉络层用于通用国家、水系和行政参考，两者都不参与坐标和面积计算。"}</p>
+    <p className="section-note">{baseMapMode === "amap" ? "二维模式下，高德底图与地理脉络互斥：开启地理脉络时使用本地 WGS84 地理底图，不叠加高德；关闭后显示高德 GCJ-02 底图。三维按钮切换高德球面地图。规划坐标与计算结果保持 WGS84。" : "中国标准表达层用于规划显示，覆盖台湾省、钓鱼岛、南海诸岛及相关边界；地理脉络层用于通用国家、水系和行政参考，两者都不参与坐标和面积计算。"}</p>
     <h3>H3 网格</h3>
     <label className="check-field"><input type="checkbox" checked={h3.visible} onChange={(event) => useWorkbenchStore.getState().setH3({ visible: event.target.checked })} />显示网格</label>
     <NumberField label="层级 0-13" value={h3.resolution} onChange={(resolution) => useWorkbenchStore.getState().setH3({ resolution: Math.min(13, Math.max(0, Math.round(resolution))) })} />
