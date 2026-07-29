@@ -56,6 +56,7 @@ test("offers AMap and falls back to offline map when desktop API is unavailable"
   const offline = page.getByRole("button", { name: "离线", exact: true });
   const amap = page.getByRole("button", { name: "高德地图", exact: true });
   await expect(amap).toBeVisible();
+  await page.getByText("地理脉络", { exact: true }).locator("input").uncheck();
   await amap.click();
   await expect(page.getByText(/尚未配置高德地图 Web JS API，已切回离线地图/)).toBeVisible();
   await expect(offline).toHaveAttribute("aria-pressed", "true");
@@ -90,7 +91,8 @@ test("switches AMap between SDK 2D and a globe basemap", async ({ page }) => {
   await page.getByTestId("basemap-amap").click();
   await expect(page.getByText("中国表达（高德内置）")).toBeVisible();
   await expect(page.getByText("中国表达（高德内置）").locator("input")).toBeDisabled();
-  await expect(page.locator(".amap-base-layer")).toHaveAttribute("data-amap-view-mode", "2D");
+  await expect(page.locator(".amap-base-layer")).not.toHaveClass(/active/);
+  await expect(page.locator(".map-workbench")).toHaveAttribute("data-geographic-context", "visible");
   await page.getByRole("button", { name: "三维" }).click();
   await expect(page.getByText("高德球面检查视图：条带编辑已锁定")).toBeVisible();
   await expect(page.getByTestId("basemap-amap")).toHaveAttribute("aria-pressed", "true");
@@ -102,7 +104,16 @@ test("switches AMap between SDK 2D and a globe basemap", async ({ page }) => {
   await page.getByRole("button", { name: "二维" }).click();
   await expect(page.locator(".map-workbench")).not.toHaveClass(/amap-globe/);
   await expect(page.locator(".map-workbench")).toHaveAttribute("data-map-projection", "mercator");
+  await expect(page.locator(".amap-base-layer")).not.toHaveClass(/active/);
+  await page.getByText("地理脉络", { exact: true }).locator("input").uncheck();
   await expect(page.locator(".amap-base-layer")).toHaveClass(/active/);
+  await expect(page.locator(".amap-base-layer")).toHaveAttribute("data-amap-view-mode", "2D");
+  await page.getByTestId("basemap-offline").click();
+  await expect(page.locator(".amap-base-layer")).not.toHaveClass(/active/);
+  await expect(page.locator(".map-workbench")).toHaveAttribute("data-active-basemap", "offline");
+  await page.getByTestId("basemap-osm").click();
+  await expect(page.locator(".amap-base-layer")).not.toHaveClass(/active/);
+  await expect(page.locator(".map-workbench")).toHaveAttribute("data-active-basemap", "osm");
 });
 
 test("shows geographic context on AMap and keeps offline and OSM globe views complete", async ({ page }) => {
@@ -136,8 +147,12 @@ test("shows geographic context on AMap and keeps offline and OSM globe views com
   await expect(page.locator(".map-workbench")).toHaveAttribute("data-geographic-context", "hidden");
   await geographicContext.check();
   await page.getByTestId("basemap-amap").click();
-  await expect(page.locator(".amap-base-layer")).toHaveClass(/active/);
+  await expect(page.locator(".amap-base-layer")).not.toHaveClass(/active/);
   await expect(page.locator(".map-workbench")).toHaveAttribute("data-geographic-context", "visible");
+  await geographicContext.uncheck();
+  await expect(page.locator(".amap-base-layer")).toHaveClass(/active/);
+  await geographicContext.check();
+  await expect(page.locator(".amap-base-layer")).not.toHaveClass(/active/);
   await page.getByRole("button", { name: "三维" }).click();
   await expect(page.locator(".map-workbench")).toHaveAttribute("data-map-projection", "globe");
   await page.getByTestId("basemap-offline").click();

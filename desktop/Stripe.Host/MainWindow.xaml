@@ -4,7 +4,8 @@
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         Title="卫星条带规划工具"
         Width="1540" Height="960" MinWidth="1180" MinHeight="760"
-        WindowStartupLocation="CenterScreen" Background="#EEF1F2">
+        WindowStartupLocation="CenterScreen" Background="#EEF1F2"
+        UseLayoutRounding="True" SnapsToDevicePixels="True">
   <DockPanel LastChildFill="True">
     <Menu DockPanel.Dock="Top" FontFamily="Microsoft YaHei UI" FontSize="12">
       <MenuItem Header="文件(_F)">
@@ -44,7 +45,7 @@
       </MenuItem>
     </Menu>
     <Grid>
-      <wv2:WebView2 x:Name="Browser" DefaultBackgroundColor="#EEF1F2" />
+      <wv2:WebView2 x:Name="Browser" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" DefaultBackgroundColor="#EEF1F2" />
       <Border x:Name="LoadingPanel" Background="#EEF1F2">
         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
           <TextBlock Text="卫星条带规划工具" FontFamily="Microsoft YaHei UI" FontSize="22" FontWeight="SemiBold" Foreground="#194D5C" HorizontalAlignment="Center" />
