@@ -1,0 +1,5 @@
+/maps/*
+  Access-Control-Allow-Origin: *
+  Access-Control-Allow-Headers: Range
+  Access-Control-Expose-Headers: Accept-Ranges, Content-Length, Content-Range
+  Cache-Control: public, max-age=31536000, immutable
