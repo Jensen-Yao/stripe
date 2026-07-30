@@ -265,7 +265,7 @@ namespace Stripe.Host
         {
             var fromEnvironment = Environment.GetEnvironmentVariable("STRIPE_AMAP_CONFIG");
             if (!string.IsNullOrWhiteSpace(fromEnvironment)) yield return fromEnvironment;
-            yield return @"D:\Desktop\bot\api\高德地图api\web JS api.txt";
+            yield return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "bot", "api", "高德地图api", "web JS api.txt");
             yield return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Desktop", "bot", "api", "高德地图api", "web JS api.txt");
         }
 
