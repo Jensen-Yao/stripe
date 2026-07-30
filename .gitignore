@@ -13,6 +13,7 @@ playwright-report/
 Thumbs.db
 .tools/
 .cache/
+.wrangler/
 orbit-engine/runtime/
 orbit-engine/target/
 orbit-engine/data/*
