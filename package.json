@@ -14,8 +14,6 @@
     "generate:amap-overview": "node scripts/generate-amap-globe-overview.mjs",
     "generate:map": "node scripts/generate-world-pmtiles.mjs",
     "deploy:pages": "gh workflow run pages.yml --repo Jensen-Yao/stripe",
-    "build:cloudflare": "npm run build:web && wrangler pages functions build functions --outdir dist/_worker.js --minify",
-    "deploy:cloudflare": "npm run build:cloudflare && wrangler pages deploy dist --project-name stripe-planner --branch main",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
