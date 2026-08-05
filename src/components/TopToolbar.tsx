@@ -4,6 +4,7 @@ import {
   FilePlus2,
   FolderOpen,
   MousePointer2,
+  Orbit,
   Pause,
   PenTool,
   Play,
@@ -44,8 +45,11 @@ export function TopToolbar() {
   return (
     <header className="top-toolbar">
       <div className="brand-block">
-        <strong>Stripe</strong>
-        <span>卫星规划工作台 0.3.10</span>
+        <span className="brand-mark" aria-hidden="true"><Orbit size={18} strokeWidth={1.8} /></span>
+        <span className="brand-copy">
+          <strong>Stripe</strong>
+          <span>卫星规划工作台</span>
+        </span>
       </div>
       <div className="toolbar-group">
         <IconButton title="新建项目" onClick={() => { if (!store.getState().dirty || window.confirm("当前项目有未保存修改，仍要新建项目吗？")) store.getState().resetProject(); }}><FilePlus2 size={17} /></IconButton>
@@ -72,10 +76,10 @@ export function TopToolbar() {
       <div className="toolbar-spacer" />
       <span className="project-indicator" title={projectPath}>{projectPath?.split(/[\\/]/).at(-1) ?? "未命名项目"}{dirty ? " *" : ""}</span>
       <div className="toolbar-group view-switch">
-        <button className={viewMode === "2d" ? "active" : ""} onClick={() => store.getState().setViewMode("2d")}>二维</button>
-        <button className={viewMode === "3d" ? "active" : ""} onClick={() => store.getState().setViewMode("3d")}><Box size={15} />三维</button>
+        <button type="button" title="二维地图" className={viewMode === "2d" ? "active" : ""} onClick={() => store.getState().setViewMode("2d")}>二维</button>
+        <button type="button" title="三维地球" className={viewMode === "3d" ? "active" : ""} onClick={() => store.getState().setViewMode("3d")}><Box size={15} />三维</button>
       </div>
-      <button className="play-button" onClick={() => store.getState().setPlaying(!isPlaying)}>
+      <button type="button" className="play-button" onClick={() => store.getState().setPlaying(!isPlaying)}>
         {isPlaying ? <Pause size={16} /> : <Play size={16} />}
         {isPlaying ? "暂停" : "播放"}
       </button>
