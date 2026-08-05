@@ -4,7 +4,7 @@
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         Title="卫星条带规划工具"
         Width="1540" Height="960" MinWidth="1180" MinHeight="760"
-        WindowStartupLocation="CenterScreen" Background="#EEF1F2"
+        WindowStartupLocation="CenterScreen" Background="#F2F2F7"
         UseLayoutRounding="True" SnapsToDevicePixels="True">
   <DockPanel LastChildFill="True">
     <Menu DockPanel.Dock="Top" FontFamily="Microsoft YaHei UI" FontSize="12">
@@ -45,11 +45,11 @@
       </MenuItem>
     </Menu>
     <Grid>
-      <wv2:WebView2 x:Name="Browser" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" DefaultBackgroundColor="#EEF1F2" />
-      <Border x:Name="LoadingPanel" Background="#EEF1F2">
+      <wv2:WebView2 x:Name="Browser" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" DefaultBackgroundColor="#F2F2F7" />
+      <Border x:Name="LoadingPanel" Background="#F2F2F7">
         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-          <TextBlock Text="卫星条带规划工具" FontFamily="Microsoft YaHei UI" FontSize="22" FontWeight="SemiBold" Foreground="#194D5C" HorizontalAlignment="Center" />
-          <TextBlock Text="正在启动轻量规划内核..." Margin="0,10,0,0" FontFamily="Microsoft YaHei UI" FontSize="13" Foreground="#64767B" HorizontalAlignment="Center" />
+          <TextBlock Text="卫星条带规划工具" FontFamily="Microsoft YaHei UI" FontSize="22" FontWeight="SemiBold" Foreground="#1D1D1F" HorizontalAlignment="Center" />
+          <TextBlock Text="正在启动规划工作台..." Margin="0,10,0,0" FontFamily="Microsoft YaHei UI" FontSize="13" Foreground="#6E6E73" HorizontalAlignment="Center" />
         </StackPanel>
       </Border>
     </Grid>

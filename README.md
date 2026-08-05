@@ -12,7 +12,7 @@
   </p>
 
   <p>
-    <a href="https://stripe-planner.pages.dev/"><strong>在线体验</strong></a>
+    <a href="https://jensen-yao.github.io/stripe/"><strong>在线体验</strong></a>
     ·
     <a href="https://github.com/Jensen-Yao/stripe/releases/latest"><strong>下载 Windows 版</strong></a>
     ·
@@ -51,7 +51,7 @@ Windows 安装包采用 `.NET Framework 4.8 + WebView2` 宿主，不捆绑 Elect
 
 ### 在线版
 
-访问 [stripe-planner.pages.dev](https://stripe-planner.pages.dev/)。在线版适合直接体验条带绘制、离线矢量地图、三维检查和浏览器内轨道计算；依赖桌面宿主的系统文件与加密凭据功能不可用。
+访问 [jensen-yao.github.io/stripe](https://jensen-yao.github.io/stripe/)。在线版适合直接体验条带绘制、离线矢量地图、三维检查和浏览器内轨道计算；依赖桌面宿主的系统文件与加密凭据功能不可用。
 
 ## 典型工作流
 
@@ -67,7 +67,7 @@ Windows 安装包采用 `.NET Framework 4.8 + WebView2` 宿主，不捆绑 Elect
 ```mermaid
 flowchart LR
   Desktop[".NET Framework 4.8 + WebView2"] --> UI["React + TypeScript"]
-  Cloud["Cloudflare Pages"] --> UI
+  Pages["GitHub Pages"] --> UI
   UI --> Map["MapLibre GL + deck.gl"]
   UI --> State["Zustand 场景状态"]
   UI --> Workers["轨道 / H3 / 几何 Web Workers"]
@@ -76,7 +76,7 @@ flowchart LR
   Workers --> Models["SGP4 / H3 / 精确多边形分析"]
 ```
 
-条带、轨迹、覆盖足迹和 H3 网格由 GPU 图层绘制；轨道、网格和几何分析在 Web Worker 中执行，避免阻塞地图交互。Cloudflare Pages Function 为 PMTiles 提供标准字节范围请求，在线版无需整包下载地图。
+条带、轨迹、覆盖足迹和 H3 网格由 GPU 图层绘制；轨道、网格和几何分析在 Web Worker 中执行，避免阻塞地图交互。GitHub Pages 托管完整静态工作台和 PMTiles 地图，浏览器按字节范围读取所需瓦片，无需整包下载地图。
 
 ## 本地开发
 
@@ -96,7 +96,7 @@ npm test                 # 单元测试
 npm run test:e2e         # Playwright 端到端测试
 npm run build            # Web 与 Windows 宿主构建
 npm run dist:win         # 生成 Windows x64 安装包
-npm run deploy:cloudflare # 发布在线版
+npm run deploy:pages      # 触发 GitHub Pages 发布
 ```
 
 重新生成离线地图时运行 `npm run generate:map`。Windows 安装包输出到 `release/Stripe-Setup-0.3.10-x64.exe`。

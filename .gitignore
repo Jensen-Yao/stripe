@@ -6,6 +6,7 @@ release/
 **/obj/
 test-results/
 playwright-report/
+.playwright-cli/
 *.stripeproj
 *.log
 .env
